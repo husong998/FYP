@@ -25,7 +25,8 @@
 
 namespace gunrock {
 namespace app {
-namespace pr {
+namespace gcn {
+namespace graphsum {
 
 /**
  * @brief Speciflying parameters for SSSP Enactor
@@ -754,7 +755,8 @@ class Enactor : public EnactorBase<typename _Problem::GraphT,
   /** @} */
 };
 
-}  // namespace pr
+}  // namespace graphsum
+}  // namespace gcn
 }  // namespace app
 }  // namespace gunrock
 
