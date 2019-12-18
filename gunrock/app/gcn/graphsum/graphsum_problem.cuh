@@ -20,7 +20,8 @@
 
 namespace gunrock {
 namespace app {
-namespace pr {
+namespace gcn {
+namespace graphsum {
 
 /**
  * @brief Speciflying parameters for PR Problem
@@ -552,7 +553,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   /** @} */
 };  // Problem
 
-}  // namespace pr
+}  // namespace graphsum
+}  // namespace gcn
 }  // namespace app
 }  // namespace gunrock
 
