@@ -7,488 +7,359 @@
 
 /**
  * @file
- * pr_test.cu
+ * gtc_test.cu
  *
- * @brief Test related functions for PageRank
+ * @brief Test related functions for SSSP
  */
 
 #pragma once
 
 #ifdef BOOST_FOUND
-// boost includes
+// Boost includes for CPU Dijkstra SSSP reference algorithms
 #include <boost/config.hpp>
-#include <boost/utility.hpp>
+#include <boost/graph/graph_traits.hpp>
 #include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/page_rank.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
+#include <boost/property_map/property_map.hpp>
+#else
+#include <queue>
+#include <vector>
+#include <utility>
 #endif
 
 namespace gunrock {
 namespace app {
-namespace pr {
+namespace sssp {
 
 /******************************************************************************
  * Housekeeping Routines
  ******************************************************************************/
 
 /**
- * @brief Displays the PageRank result
- *
- * @param[in] vertices Vertex Ids
- * @param[in] ranks PageRank values for the vertices
- * @param[in] num_vertices Number of vertices to display
+ * @brief Displays the SSSP result (i.e., distance from source)
+ * @tparam T Type of values to display
+ * @tparam SizeT Type of size counters
+ * @param[in] preds Search depth from the source for each node.
+ * @param[in] num_nodes Number of nodes in the graph.
  */
-template <typename VertexT, typename SizeT, typename ValueT>
-void DisplaySolution(VertexT *vertices, ValueT *ranks, SizeT num_vertices) {
-  // at most top 10 ranked vertices
-  SizeT top = (num_vertices < 10) ? num_vertices : 10;
-  util::PrintMsg("Top " + std::to_string(top) +
-                 " Ranked vertices and PageRanks:");
-  for (SizeT i = 0; i < top; ++i) {
-    util::PrintMsg("Vertex ID: " + std::to_string(vertices[i]) +
-                   ", PageRank: " + std::to_string(ranks[i]));
+template <typename T, typename SizeT>
+void DisplaySolution(T *array, SizeT length) {
+  if (length > 40) length = 40;
+
+  util::PrintMsg("[", true, false);
+  for (SizeT i = 0; i < length; ++i) {
+    util::PrintMsg(std::to_string(i) + ":" + std::to_string(array[i]) + " ",
+                   true, false);
   }
-}
-
-template <typename GraphT>
-cudaError_t Compensate_ZeroDegrees(GraphT &graph, bool quiet = false) {
-  typedef typename GraphT::VertexT VertexT;
-  typedef typename GraphT::SizeT SizeT;
-  typedef typename GraphT::ValueT ValueT;
-  typedef typename GraphT::CooT CooT;
-  typedef typename CooT::EdgePairT EdgePairT;
-  cudaError_t retval = cudaSuccess;
-  auto &graph_coo = graph.coo();
-
-  util::Array1D<SizeT, int> vertex_markers;
-  GUARD_CU(vertex_markers.Allocate(graph_coo.nodes, util::HOST));
-  GUARD_CU(vertex_markers.ForEach(
-      [] __host__ __device__(int &marker) { marker = 0; }, graph_coo.nodes,
-      util::HOST));
-
-  GUARD_CU(graph_coo.edge_pairs.ForEach(
-      [vertex_markers] __host__ __device__(const EdgePairT &pair) {
-        vertex_markers[pair.x] = 1;
-      },
-      graph_coo.edges, util::HOST));
-
-  util::Array1D<SizeT, VertexT> zeroDegree_vertices;
-  GUARD_CU(zeroDegree_vertices.Allocate(graph.nodes, util::HOST));
-  SizeT counter = 0;
-  for (VertexT v = 0; v < graph_coo.nodes; v++)
-    if (vertex_markers[v] == 0) {
-      zeroDegree_vertices[counter] = v;
-      counter++;
-    }
-  GUARD_CU(vertex_markers.Release());
-
-  if (counter == 0) {
-    GUARD_CU(zeroDegree_vertices.Release());
-    return retval;
-  }
-
-  if (!quiet)
-    util::PrintMsg("Adding 1 vertex and " +
-                   std::to_string(counter + graph_coo.nodes) +
-                   " edges to compensate 0 degree vertices");
-
-  CooT new_coo;
-  GUARD_CU(new_coo.Allocate(graph_coo.nodes + 1,
-                            graph_coo.edges + counter + graph_coo.nodes,
-                            util::HOST));
-  GUARD_CU(new_coo.edge_pairs.ForEach(
-      graph_coo.edge_pairs,
-      [] __host__ __device__(EdgePairT & new_pair, const EdgePairT &old_pair) {
-        new_pair.x = old_pair.x;
-        new_pair.y = old_pair.y;
-      },
-      graph_coo.edges, util::HOST));
-  if (CooT::FLAG & gunrock::graph::HAS_EDGE_VALUES) {
-    GUARD_CU(new_coo.edge_values.ForEach(
-        graph_coo.edge_values,
-        [] __host__ __device__(ValueT & new_value, const ValueT &old_value) {
-          new_value = old_value;
-        },
-        graph_coo.edges, util::HOST));
-  }
-  if (CooT::FLAG & gunrock::graph::HAS_NODE_VALUES) {
-    GUARD_CU(new_coo.node_values.ForEach(
-        graph_coo.node_values,
-        [] __host__ __device__(ValueT & new_value, const ValueT &old_value) {
-          new_value = old_value;
-        },
-        graph_coo.nodes, util::HOST));
-  }
-
-  SizeT edge_counter = graph_coo.edges;
-  for (SizeT i = 0; i < counter; i++) {
-    auto &edgePair = new_coo.edge_pairs[edge_counter + i];
-    edgePair.x = zeroDegree_vertices[i];
-    edgePair.y = graph_coo.nodes;
-    if (CooT::FLAG & gunrock::graph::HAS_EDGE_VALUES)
-      new_coo.edge_values[edge_counter + i] =
-          util::PreDefinedValues<ValueT>::InvalidValue;
-  }
-  edge_counter += counter;
-  for (VertexT v = 0; v < graph_coo.nodes; v++) {
-    auto &edgePair = new_coo.edge_pairs[edge_counter + v];
-    edgePair.x = graph_coo.nodes;
-    edgePair.y = v;
-    if (CooT::FLAG & gunrock::graph::HAS_EDGE_VALUES)
-      new_coo.edge_values[edge_counter + v] =
-          util::PreDefinedValues<ValueT>::InvalidValue;
-  }
-  if (CooT::FLAG & gunrock::graph::HAS_NODE_VALUES)
-    new_coo.node_values[graph_coo.nodes] =
-        util::PreDefinedValues<ValueT>::InvalidValue;
-
-  GUARD_CU(zeroDegree_vertices.Release());
-  new_coo.edge_order = gunrock::graph::UNORDERED;
-  GUARD_CU(graph.FromCoo(new_coo, util::LOCATION_DEFAULT, 0, quiet));
-  GUARD_CU(new_coo.Release());
-
-  return retval;
+  util::PrintMsg("]");
 }
 
 /******************************************************************************
- * PageRank Testing Routines
+ * SSSP Testing Routines
  *****************************************************************************/
 
-template <typename VertexT, typename ValueT>
-struct RankPair {
-  VertexT vertex_id;
-  ValueT page_rank;
-
-  RankPair(VertexT vertex_id, ValueT page_rank)
-      : vertex_id(vertex_id), page_rank(page_rank) {}
-};
-
-template <typename RankPairT>
-bool PRCompare(const RankPairT &elem1, const RankPairT &elem2) {
-  return elem1.page_rank > elem2.page_rank;
-}
-
 /**
- * @brief Simple CPU-based reference PageRank implementations
+ * @brief Simple CPU-based reference SSSP implementations
  * @tparam      GraphT        Type of the graph
  * @tparam      ValueT        Type of the distances
- * @param[in]   parameters    Running parameters
  * @param[in]   graph         Input graph
- * @param[in]   src           Source vertex for personalized PageRank (if any)
- * @param[out]  node_ids      Top ranking vertices
- * @param[out]  ranks         Ranking values
+ * @param[out]  distances     Computed distances from the source to each vertex
+ * @param[out]  preds         Computed predecessors for each vertex
+ * @param[in]   src           The source vertex
+ * @param[in]   quiet         Whether to print out anything to stdout
+ * @param[in]   mark_preds    Whether to compute predecessor info
+ * \return      double        Time taken for the SSSP
  */
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double CPU_Reference(util::Parameters &parameters, const GraphT &graph,
-                     typename GraphT::VertexT src,
-                     typename GraphT::VertexT *node_ids, ValueT *ranks) {
-  typedef typename GraphT::CooT CooT;
+double CPU_Reference(const GraphT &graph, ValueT *distances,
+                     typename GraphT::VertexT *preds,
+                     typename GraphT::VertexT src, bool quiet,
+                     bool mark_preds) {
+#ifdef BOOST_FOUND
+  using namespace boost;
   typedef typename GraphT::VertexT VertexT;
   typedef typename GraphT::SizeT SizeT;
+  typedef typename GraphT::ValueT GValueT;
+  typedef typename GraphT::CsrT CsrT;
 
-  bool quiet = parameters.Get<bool>("quiet");
-  bool normalize = parameters.Get<bool>("normalize");
-  bool scale = parameters.Get<bool>("scale");
-  bool undirected = parameters.Get<bool>("undirected");
-  VertexT max_iter = parameters.Get<VertexT>("max-iter");
-  ValueT threshold = parameters.Get<ValueT>("threshold");
-  ValueT delta = parameters.Get<ValueT>("delta");
+  // Prepare Boost Datatype and Data structure
+  typedef adjacency_list<vecS, vecS, directedS, no_property,
+                         property<edge_weight_t, GValueT> >
+      BGraphT;
 
-#ifdef BOOST_FOUND
-  if (!normalize && undirected) {
-    using namespace boost;
+  typedef typename graph_traits<BGraphT>::vertex_descriptor vertex_descriptor;
+  typedef typename graph_traits<BGraphT>::edge_descriptor edge_descriptor;
 
-    // preparation
-    typedef adjacency_list<vecS, vecS, bidirectionalS, no_property,
-                           property<edge_index_t, VertexT> >
-        BGraphT;
+  typedef std::pair<VertexT, VertexT> EdgeT;
 
-    BGraphT g;
+  EdgeT *edges = (EdgeT *)malloc(sizeof(EdgeT) * graph.edges);
+  GValueT *weight = (GValueT *)malloc(sizeof(GValueT) * graph.edges);
 
-    for (SizeT e = 0; e < graph.edges; ++e) {
-      auto &pair = graph.CooT::edge_pairs[e];
-      BGraphT::edge_descriptor edge = add_edge(pair.x, pair.y, g).first;
-      put(edge_index, g, edge, pair.x);
+  for (VertexT v = 0; v < graph.nodes; ++v) {
+    SizeT edge_start = graph.CsrT::GetNeighborListOffset(v);
+    SizeT num_neighbors = graph.CsrT::GetNeighborListLength(v);
+    for (SizeT e = 0; e < num_neighbors; ++e) {
+      edges[e + edge_start] = EdgeT(v, graph.CsrT::GetEdgeDest(e + edge_start));
+      weight[e + edge_start] = graph.CsrT::edge_values[e + edge_start];
     }
-
-    // compute PageRank
-    CpuTimer cpu_timer;
-    cpu_timer.Start();
-
-    std::vector<ValueT> ranks_vec(num_vertices(g));
-    page_rank(g,
-              make_iterator_property_map(ranks_vec.begin(),
-                                         get(boost::vertex_index, g)),
-              boost::graph::n_iterations(max_iter));
-
-    cpu_timer.Stop();
-    float elapsed = cpu_timer.ElapsedMillis();
-
-    // Sort the top ranked vertices
-    typedef RankPair<VertexT, ValueT> RankPairT;
-    RankPairT *pr_list =
-        (RankPairT *)malloc(sizeof(RankPairT) * num_vertices(g));
-    for (VertexT v = 0; v < num_vertices(g); ++v) {
-      pr_list[v].vertex_id = v;
-      pr_list[v].page_rank = ranks_vec[v];
-    }
-    std::stable_sort(pr_list, pr_list + num_vertices(g), PRCompare<RankPairT>);
-
-    for (VertexT v = 0; v < num_vertices(g); ++v) {
-      node_ids[v] = pr_list[v].vertex_id;
-      ranks[v] = pr_list[v].page_rank;
-    }
-    free(pr_list);
-    pr_list = NULL;
-    return elapsed;
   }
-#endif
 
-  SizeT nodes = graph.nodes;
-  SizeT edges = graph.edges;
-  ValueT *rank_current = (ValueT *)malloc(sizeof(ValueT) * nodes);
-  ValueT *rank_next = (ValueT *)malloc(sizeof(ValueT) * nodes);
-  ValueT *rev_degrees = (ValueT *)malloc(sizeof(ValueT) * nodes);
-  bool to_continue = true;
-  SizeT iteration = 0;
-  ValueT init_value =
-      normalize ? (scale ? 1.0 : (1.0 / (ValueT)nodes)) : (1.0 - delta);
-  ValueT reset_value =
-      normalize ? (scale ? (1.0 - delta) : ((1.0 - delta) / (ValueT)nodes))
-                : (1.0 - delta);
+  BGraphT g(edges, edges + graph.edges, weight, graph.nodes);
+
+  std::vector<ValueT> d(graph.nodes);
+  std::vector<vertex_descriptor> p(graph.nodes);
+  vertex_descriptor s = vertex(src, g);
+
+  typename property_map<BGraphT, vertex_index_t>::type indexmap =
+      get(vertex_index, g);
+
+  //
+  // Perform SSSP
+  //
+
   util::CpuTimer cpu_timer;
-
-#pragma omp parallel for
-  for (VertexT v = 0; v < nodes; v++) {
-    rank_current[v] = init_value;
-    rank_next[v] = normalize ? 0.0 : (1.0 - delta);
-    rev_degrees[v] = 0;
-  }
-
-#pragma omp parallel for
-  for (SizeT e = 0; e < edges; e++) {
-    VertexT v = graph.CooT::edge_pairs[e].x;
-#pragma omp atomic
-    rev_degrees[v] += 1;
-  }
-#pragma omp parallel for
-  for (VertexT v = 0; v < nodes; v++) {
-    if (rev_degrees[v] > 1e-6) rev_degrees[v] = 1 / rev_degrees[v];
-  }
-
   cpu_timer.Start();
-  while (to_continue) {
-#pragma omp parallel for
-    for (SizeT e = 0; e < graph.edges; e++) {
-      auto &edge_pair = graph.CooT::edge_pairs[e];
-      auto &src = edge_pair.x;
-      auto &dest = edge_pair.y;
-      ValueT dist_rank = rank_current[src] * rev_degrees[src];
-      if (!isfinite(dist_rank)) continue;
-#pragma omp atomic
-      rank_next[dest] += dist_rank;
-    }
-    to_continue = false;
-    iteration++;
 
-#pragma omp parallel for
-    for (VertexT v = 0; v < nodes; v++) {
-      ValueT rank_new = delta * rank_next[v];
-      if (!isfinite(rank_new)) rank_new = 0;
-      rank_new = rank_new + reset_value;
-      if (iteration <= max_iter &&
-          fabs(rank_new - rank_current[v]) > threshold * rank_current[v]) {
-        to_continue = true;
-      }
-      rank_current[v] = rank_new;
-      rank_next[v] = 0;
-    }
-    if (iteration >= max_iter) to_continue = false;
+  if (mark_preds) {
+    dijkstra_shortest_paths(
+        g, s,
+        predecessor_map(boost::make_iterator_property_map(
+                            p.begin(), get(boost::vertex_index, g)))
+            .distance_map(boost::make_iterator_property_map(
+                d.begin(), get(boost::vertex_index, g))));
+  } else {
+    dijkstra_shortest_paths(g, s,
+                            distance_map(boost::make_iterator_property_map(
+                                d.begin(), get(boost::vertex_index, g))));
   }
   cpu_timer.Stop();
   float elapsed = cpu_timer.ElapsedMillis();
 
-  typedef RankPair<VertexT, ValueT> RankPairT;
-  // Sort the top ranked vertices
-  RankPairT *pr_list = (RankPairT *)malloc(sizeof(RankPairT) * nodes);
-
-#pragma omp parallel for
-  for (VertexT v = 0; v < nodes; ++v) {
-    pr_list[v].vertex_id = v;
-    pr_list[v].page_rank = rank_current[v];
+  typedef std::pair<VertexT, ValueT> PairT;
+  PairT *sort_dist = new PairT[graph.nodes];
+  typename graph_traits<BGraphT>::vertex_iterator vi, vend;
+  for (tie(vi, vend) = vertices(g); vi != vend; ++vi) {
+    sort_dist[(*vi)].first = (*vi);
+    sort_dist[(*vi)].second = d[(*vi)];
   }
+  std::stable_sort(
+      sort_dist, sort_dist + graph.nodes,
+      // RowFirstTupleCompare<Coo<Value, Value> >);
+      [](const PairT &a, const PairT &b) -> bool { return a.first < b.first; });
+  for (VertexT v = 0; v < graph.nodes; ++v) distances[v] = sort_dist[v].second;
+  delete[] sort_dist;
+  sort_dist = NULL;
 
-  std::stable_sort(pr_list, pr_list + nodes, PRCompare<RankPairT>);
-
-#pragma omp parallel for
-  for (VertexT v = 0; v < nodes; ++v) {
-    node_ids[v] = pr_list[v].vertex_id;
-    ranks[v] = (scale & normalize) ? (pr_list[v].page_rank / (ValueT)nodes)
-                                   : pr_list[v].page_rank;
+  if (mark_preds) {
+    typedef std::pair<VertexT, VertexT> VPairT;
+    VPairT *sort_pred = new VPairT[graph.nodes];
+    for (tie(vi, vend) = vertices(g); vi != vend; ++vi) {
+      sort_pred[(*vi)].first = (*vi);
+      sort_pred[(*vi)].second = p[(*vi)];
+    }
+    std::stable_sort(sort_pred, sort_pred + graph.nodes,
+                     // RowFirstTupleCompare< Coo<VertexId, VertexId> >);
+                     [](const VPairT &a, const VPairT &b) -> bool {
+                       return a.first < b.first;
+                     });
+    for (VertexT v = 0; v < graph.nodes; ++v) preds[v] = sort_pred[v].second;
+    delete[] sort_pred;
+    sort_pred = NULL;
   }
-
-  free(pr_list);
-  pr_list = NULL;
-  free(rank_current);
-  rank_current = NULL;
-  free(rank_next);
-  rank_next = NULL;
 
   return elapsed;
+#else
+
+  typedef typename GraphT::VertexT VertexT;
+  typedef typename GraphT::SizeT SizeT;
+  typedef std::pair<VertexT, ValueT> PairT;
+  struct GreaterT {
+    bool operator()(const PairT &lhs, const PairT &rhs) {
+      return lhs.second > rhs.second;
+    }
+  };
+  typedef std::priority_queue<PairT, std::vector<PairT>, GreaterT> PqT;
+
+  for (VertexT v = 0; v < graph.nodes; v++) {
+    distances[v] = util::PreDefinedValues<ValueT>::MaxValue;
+    if (mark_preds && preds != NULL)
+      preds[v] = util::PreDefinedValues<VertexT>::InvalidValue;
+  }
+  distances[src] = 0;
+  if (mark_preds && preds != NULL) preds[src] = src;
+
+  PqT pq;
+  pq.push(std::make_pair(src, 0));
+  util::CpuTimer cpu_timer;
+  cpu_timer.Start();
+  while (!pq.empty()) {
+    auto pair = pq.top();
+    pq.pop();
+    VertexT v = pair.first;
+    ValueT v_distance = pair.second;
+    if (v_distance > distances[v]) continue;
+
+    SizeT e_start = graph.GetNeighborListOffset(v);
+    SizeT e_end = e_start + graph.GetNeighborListLength(v);
+    for (SizeT e = e_start; e < e_end; e++) {
+      VertexT u = graph.GetEdgeDest(e);
+      ValueT u_distance = v_distance + graph.edge_values[e];
+      if (u_distance < distances[u]) {
+        distances[u] = u_distance;
+        if (mark_preds && preds != NULL) preds[u] = v;
+        pq.push(std::make_pair(u, u_distance));
+      }
+    }
+  }
+  cpu_timer.Stop();
+  float elapsed = cpu_timer.ElapsedMillis();
+
+  return elapsed;
+#endif
 }
 
+/**
+ * @brief Validation of SSSP results
+ * @tparam     GraphT        Type of the graph
+ * @tparam     ValueT        Type of the distances
+ * @param[in]  parameters    Excution parameters
+ * @param[in]  graph         Input graph
+ * @param[in]  src           The source vertex
+ * @param[in]  h_distances   Computed distances from the source to each vertex
+ * @param[in]  h_preds       Computed predecessors for each vertex
+ * @param[in]  ref_distances Reference distances from the source to each vertex
+ * @param[in]  ref_preds     Reference predecessors for each vertex
+ * @param[in]  verbose       Whether to output detail comparsions
+ * \return     GraphT::SizeT Number of errors
+ */
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
 typename GraphT::SizeT Validate_Results(
     util::Parameters &parameters, GraphT &graph, typename GraphT::VertexT src,
-    typename GraphT::VertexT *h_node_ids, ValueT *h_ranks,
-    typename GraphT::VertexT *ref_node_ids = NULL, ValueT *ref_ranks = NULL,
+    ValueT *h_distances, typename GraphT::VertexT *h_preds,
+    ValueT *ref_distances = NULL, typename GraphT::VertexT *ref_preds = NULL,
     bool verbose = true) {
   typedef typename GraphT::VertexT VertexT;
   typedef typename GraphT::SizeT SizeT;
-  /*if (!quiet_mode)
-  {
-      double total_pr = 0;
-      for (SizeT i = 0; i < graph->nodes; ++i)
-      {
-          total_pr += h_rank[i];
-      }
-      printf("Total rank : %.10lf\n", total_pr);
-  }*/
+  typedef typename GraphT::CsrT CsrT;
 
+  SizeT num_errors = 0;
   bool quiet = parameters.Get<bool>("quiet");
-  ValueT threshold = parameters.Get<ValueT>("threshold");
-  SizeT nodes = graph.nodes;
+  bool mark_pred = parameters.Get<bool>("mark-pred");
 
   // Verify the result
-  util::PrintMsg("Rank Validity: ", !quiet, false);
-  ValueT *unorder_ranks = (ValueT *)malloc(sizeof(ValueT) * nodes);
-  SizeT *v_counts = (SizeT *)malloc(sizeof(SizeT) * nodes);
-  SizeT error_count = 0;
-  for (VertexT v = 0; v < nodes; v++) v_counts[v] = 0;
+  if (ref_distances != NULL) {
+    for (VertexT v = 0; v < graph.nodes; v++) {
+      if (!util::isValid(ref_distances[v]))
+        ref_distances[v] = util::PreDefinedValues<ValueT>::MaxValue;
+    }
 
-  for (VertexT v_ = 0; v_ < nodes; v_++) {
-    VertexT v = h_node_ids[v_];
-    if (util::lessThanZero(v) || v >= nodes) {
-      util::PrintMsg("FAIL: node_id[" + std::to_string(v_) + "] (" +
-                         std::to_string(v) + ") is out of bound.",
-                     error_count == 0 && !quiet);
-      error_count++;
-      continue;
+    util::PrintMsg("Distance Validity: ", !quiet, false);
+    SizeT errors_num = util::CompareResults(h_distances, ref_distances,
+                                            graph.nodes, true, quiet);
+    if (errors_num > 0) {
+      util::PrintMsg(std::to_string(errors_num) + " errors occurred.", !quiet);
+      num_errors += errors_num;
     }
-    if (v_counts[v] > 0) {
-      util::PrintMsg("FAIL: node_id[" + std::to_string(v_) + "] (" +
-                         std::to_string(v) + ") appears more than once.",
-                     error_count == 0 && !quiet);
-      error_count++;
-      continue;
+  } else if (ref_distances == NULL) {
+    util::PrintMsg("Distance Validity: ", !quiet, false);
+    SizeT errors_num = 0;
+    for (VertexT v = 0; v < graph.nodes; v++) {
+      ValueT v_distance = h_distances[v];
+      if (!util::isValid(v_distance)) continue;
+      SizeT e_start = graph.CsrT::GetNeighborListOffset(v);
+      SizeT num_neighbors = graph.CsrT::GetNeighborListLength(v);
+      SizeT e_end = e_start + num_neighbors;
+      for (SizeT e = e_start; e < e_end; e++) {
+        VertexT u = graph.CsrT::GetEdgeDest(e);
+        ValueT u_distance = h_distances[u];
+        ValueT e_value = graph.CsrT::edge_values[e];
+        if (v_distance + e_value >= u_distance) continue;
+        errors_num++;
+        if (errors_num > 1) continue;
+
+        util::PrintMsg("FAIL: v[" + std::to_string(v) + "] (" +
+                           std::to_string(v_distance) + ") + e[" +
+                           std::to_string(e) + "] (" + std::to_string(e_value) +
+                           ") < u[" + std::to_string(u) + "] (" +
+                           std::to_string(u_distance) + ")",
+                       !quiet);
+      }
     }
-    v_counts[v]++;
-    unorder_ranks[v] = h_ranks[v_];
+    if (errors_num > 0) {
+      util::PrintMsg(std::to_string(errors_num) + " errors occurred.", !quiet);
+      num_errors += errors_num;
+    } else {
+      util::PrintMsg("PASS", !quiet);
+    }
   }
-  for (VertexT v = 0; v < nodes; v++)
-    if (v_counts[v] == 0) {
-      util::PrintMsg(
-          "FAIL: vertex " + std::to_string(v) + " does not appear in result.",
-          error_count == 0 && !quiet);
-      error_count++;
+
+  if (!quiet && verbose) {
+    // Display Solution
+    util::PrintMsg("First 40 distances of the GPU result:");
+    DisplaySolution(h_distances, graph.nodes);
+    if (ref_distances != NULL) {
+      util::PrintMsg("First 40 distances of the reference CPU result.");
+      DisplaySolution(ref_distances, graph.nodes);
     }
-  free(v_counts);
-  v_counts = NULL;
+    util::PrintMsg("");
+  }
 
-  if (ref_node_ids != NULL && ref_ranks != NULL) {
-    double ref_total_rank = 0;
-    double max_diff = 0;
-    VertexT max_diff_pos = nodes;
-    double max_rdiff = 0;
-    VertexT max_rdiff_pos = nodes;
-    for (VertexT v_ = 0; v_ < nodes; v_++) {
-      VertexT v = ref_node_ids[v_];
-      if (util::lessThanZero(v) || v >= nodes) {
-        util::PrintMsg("FAIL: ref_node_id[" + std::to_string(v_) + "] (" +
-                           std::to_string(v) + ") is out of bound.",
-                       error_count == 0 && !quiet);
-        error_count++;
-        continue;
-      }
+  if (mark_pred) {
+    util::PrintMsg("Predecessors Validity: ", !quiet, false);
+    SizeT errors_num = 0;
+    for (VertexT v = 0; v < graph.nodes; v++) {
+      VertexT pred = h_preds[v];
+      if (!util::isValid(pred) || v == src) continue;
+      ValueT v_distance = h_distances[v];
+      if (v_distance == util::PreDefinedValues<ValueT>::MaxValue) continue;
+      ValueT pred_distance = h_distances[pred];
+      bool edge_found = false;
+      SizeT edge_start = graph.CsrT::GetNeighborListOffset(pred);
+      SizeT num_neighbors = graph.CsrT::GetNeighborListLength(pred);
 
-      auto &ref_rank = ref_ranks[v_];
-      ref_total_rank += ref_rank;
-      ValueT diff = fabs(ref_rank - unorder_ranks[v]);
-      if ((ref_rank > 1e-12 && diff > threshold * ref_rank) ||
-          (ref_rank <= 1e-12 && diff > threshold)) {
-        util::PrintMsg("FAIL: rank[" + std::to_string(v) + "] (" +
-                           std::to_string(unorder_ranks[v]) +
-                           ") != " + std::to_string(ref_rank),
-                       error_count == 0 && !quiet);
-        error_count++;
-      }
-      if (diff > max_diff) {
-        max_diff = diff;
-        max_diff_pos = v_;
-      }
-      if (ref_rank > 1e-12) {
-        ValueT rdiff = diff / ref_rank;
-        if (rdiff > max_rdiff) {
-          max_rdiff = rdiff;
-          max_rdiff_pos = v_;
+      for (SizeT e = edge_start; e < edge_start + num_neighbors; e++) {
+        if (v == graph.CsrT::GetEdgeDest(e) &&
+            std::abs((pred_distance + graph.CsrT::edge_values[e] - v_distance) *
+                     1.0) < 1e-6) {
+          edge_found = true;
+          break;
         }
       }
+      if (edge_found) continue;
+      errors_num++;
+      if (errors_num > 1) continue;
+
+      util::PrintMsg("FAIL: [" + std::to_string(pred) + "] (" +
+                         std::to_string(pred_distance) + ") -> [" +
+                         std::to_string(v) + "] (" +
+                         std::to_string(v_distance) +
+                         ") can't find the corresponding edge.",
+                     !quiet);
     }
-    if (error_count == 0)
+    if (errors_num > 0) {
+      util::PrintMsg(std::to_string(errors_num) + " errors occurred.", !quiet);
+      num_errors += errors_num;
+    } else {
       util::PrintMsg("PASS", !quiet);
-    else
-      util::PrintMsg("number of errors : " + std::to_string(error_count),
-                     !quiet);
-
-    util::PrintMsg("Reference total rank : " + std::to_string(ref_total_rank),
-                   !quiet);
-
-    util::PrintMsg("Maximum difference : ", !quiet, false);
-    util::PrintMsg(
-        "rank[" + std::to_string(ref_node_ids[max_diff_pos]) + "] " +
-            std::to_string(unorder_ranks[ref_node_ids[max_diff_pos]]) +
-            " vs. " + std::to_string(ref_ranks[max_diff_pos]) + ", ",
-        max_diff_pos < nodes && !quiet, false);
-    util::PrintMsg(std::to_string(max_diff), !quiet);
-
-    util::PrintMsg("Maximum relative difference :", !quiet, false);
-    util::PrintMsg(
-        "rank[" + std::to_string(ref_node_ids[max_rdiff_pos]) + "] " +
-            std::to_string(unorder_ranks[ref_node_ids[max_rdiff_pos]]) +
-            " vs. " + std::to_string(ref_ranks[max_rdiff_pos]) + ", ",
-        max_rdiff_pos < nodes && !quiet, false);
-    util::PrintMsg(std::to_string(max_rdiff * 100), !quiet);
-  } else {
-    if (error_count == 0)
-      util::PrintMsg("PASS", !quiet);
-    else
-      util::PrintMsg("number of errors : " + std::to_string(error_count),
-                     !quiet);
+    }
   }
 
-  util::PrintMsg("Order Validity: ", !quiet, false);
-  error_count = 0;
-  for (VertexT v = 0; v < nodes - 1; v++)
-    if (h_ranks[v] < h_ranks[v + 1]) {
-      util::PrintMsg("FAIL: rank[" + std::to_string(h_node_ids[v]) + "] (" +
-                         std::to_string(h_ranks[v]) + "), place " +
-                         std::to_string(v) + " < rank[" +
-                         std::to_string(h_node_ids[v + 1]) + "] (" +
-                         std::to_string(h_ranks[v + 1]) + "), place " +
-                         std::to_string(v + 1),
-                     error_count == 0 & !quiet);
-      error_count++;
+  if (!quiet && mark_pred && verbose) {
+    util::PrintMsg("First 40 preds of the GPU result:");
+    DisplaySolution(h_preds, graph.nodes);
+    if (ref_preds != NULL) {
+      util::PrintMsg(
+          "First 40 preds of the reference CPU result "
+          "(could be different because the paths are not unique):");
+      DisplaySolution(ref_preds, graph.nodes);
     }
-  if (error_count == 0)
-    util::PrintMsg("PASS", !quiet);
-  else
-    util::PrintMsg("number of errors : " + std::to_string(error_count), !quiet);
-  free(unorder_ranks);
-  unorder_ranks = NULL;
+    util::PrintMsg("");
+  }
 
-  return error_count;
+  return num_errors;
 }
 
-}  // namespace pr
+}  // namespace sssp
 }  // namespace app
 }  // namespace gunrock
 

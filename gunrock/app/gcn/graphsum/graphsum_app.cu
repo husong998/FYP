@@ -8,24 +8,42 @@
 /**
  * @file graphsum_app.cu
  *
- * @brief Gunrock graphsum layer in GCN
+ * @brief gcn graphsum application
  */
 
-// <primitive>_app.cuh includes
-#include <gunrock/app/app.cuh>
+#include <gunrock/gunrock.h>
 
-// page-rank includes
-#include <gunrock/app/pr/pr_enactor.cuh>
-#include <gunrock/app/pr/pr_test.cuh>
+// Utilities and correctness-checking
+#include <gunrock/util/test_utils.cuh>
 
+// Graph definations
+#include <gunrock/graphio/graphio.cuh>
+#include <gunrock/app/app_base.cuh>
+#include <gunrock/app/test_base.cuh>
 
+// single-source shortest path includes
+#include <gunrock/app/gcn/graphsum/graphsum_enactor.cuh>
+
+/**
+ * @brief      graphsum layer of GCN
+ *
+ * @param      parameters  The parameters
+ * @param      graph       The graph
+ * @param[in]  dim         dimension of the feature vector
+ * @param      in          the input to the graphsum layer
+ * @param      out         output matrix
+ *
+ * @tparam     GraphT      type of the graph
+ * @tparam     ValueT      type of the value, double by default
+ *
+ * @return     time elapsed to execute
+ */
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double gunrock_pagerank(gunrock::util::Parameters &parameters, GraphT &graph,
-                        typename GraphT::VertexT **node_ids, ValueT **ranks) {
+double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
+                    const ValueT *in, ValueT *out) {
   typedef typename GraphT::VertexT VertexT;
   typedef gunrock::app::gcn::graphsum::Problem<GraphT> ProblemT;
   typedef gunrock::app::gcn::graphsum::Enactor<ProblemT> EnactorT;
-
   gunrock::util::CpuTimer cpu_timer;
   gunrock::util::Location target = gunrock::util::DEVICE;
   double total_time = 0;
@@ -34,93 +52,72 @@ double gunrock_pagerank(gunrock::util::Parameters &parameters, GraphT &graph,
   // Allocate problem and enactor on GPU, and initialize them
   ProblemT problem(parameters);
   EnactorT enactor;
+  problem.Init(graph, dim, target);
+  enactor.Init(problem, dim, target);
 
-  printf("Init Problem and Enactor for graphsum layer.\n");
-  problem.Init(graph, target);
-  enactor.Init(problem, target);
+  problem.Reset(src, target);
+  enactor.Reset(src, target);
 
-  std::vector<VertexT> srcs = parameters.Get<std::vector<VertexT>>("srcs");
-  int num_runs = parameters.Get<int>("num-runs");
-  int num_srcs = srcs.size();
-  for (int run_num = 0; run_num < num_runs; ++run_num) {
-    printf("For run_num: %d, Reset problem and enactor and Enact.\n", run_num);
-    int src_num = run_num % num_srcs;
-    VertexT src = srcs[src_num];
-    problem.Reset(src, target);
-    enactor.Reset(src, target);
+  cpu_timer.Start();
+  enactor.Enact();
+  cpu_timer.Stop();
 
-    cpu_timer.Start();
-    enactor.Enact(src);
-    cpu_timer.Stop();
-
-    total_time += cpu_timer.ElapsedMillis();
-    enactor.Extract();
-    problem.Extract(node_ids[src_num], ranks[src_num]);
-  }
+  total_time += cpu_timer.ElapsedMillis();
+  problem.Extract(out);
 
   enactor.Release(target);
   problem.Release(target);
-  srcs.clear();
+
   return total_time;
 }
 
-/**
- * Interface for graphsum layer taking in CSR format
- * @tparam VertexT
- * @tparam SizeT
- * @tparam ValueT
- * @param [in]  num_nodes     number of nodes in graph
- * @param [in]  num_edges     number of edges in graph
- * @param [in]  row_offsets   number of nnz entries for each row
- * @param [in]  col_indices   column id for each nnz entry
- * @param [in]  dim           dimension for each node feature
- * @param [in]  feature_in    input feature matrix
- * @param [out] feature_out   output feature matrix
- * @return
+/*
+ * @brief      Simple interface take in graph as CSR format
+ *
+ * @param[in]  num_nodes    Number of veritces in the input graph
+ * @param[in]  num_edges    Number of edges in the input graph
+ * @param[in]  row_offsets  CSR-formatted graph input row offsets
+ * @param[in]  col_indices  CSR-formatted graph input column indices
+ * @param[in]  dim          The dimenssion of the feature vector
+ * @param      in           The input to graphsum layer
+ * @param      out          The output of graphsum layer
+ *
+ * @tparam     VertexT      type of vertex id, default to int
+ *
+ * @return     double      Return accumulated elapsed times for all runs
  */
-template <typename VertexT = int, typename SizeT = int, typename ValueT = float>
+template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
 double graphsum(const SizeT num_nodes, const SizeT num_edges,
-                const SizeT *row_offsets, const VertexT *col_indices, const int dim,
-                ValueT *feature_in, ValueT *feature_out) {
-  typedef typename gunrock::app::TestGraph<
-      VertexT, SizeT, ValueT, gunrock::graph::HAS_COO | gunrock::graph::HAS_CSC>
+            const SizeT *row_offsets, const VertexT *col_indices, const int dim,
+            ValueT *in, ValueT *out) {
+  typedef typename gunrock::app::TestGraph<VertexT, SizeT, GValueT,
+                                           gunrock::graph::HAS_EDGE_VALUES |
+                                               gunrock::graph::HAS_CSR>
       GraphT;
-  typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
-                                           gunrock::graph::HAS_CSR>
-      Graph_CsrT;
-  typedef typename Graph_CsrT::CsrT CsrT;
+  typedef typename GraphT::CsrT CsrT;
 
   // Setup parameters
-  gunrock::util::Parameters parameters("graphsum");
+  gunrock::util::Parameters parameters("gcn_graphsum");
   gunrock::graphio::UseParameters(parameters);
+  gunrock::app::gcn::graphsum::UseParameters(parameters);
   gunrock::app::UseParameters_test(parameters);
   parameters.Parse_CommandLine(0, NULL);
   parameters.Set("graph-type", "by-pass");
 
   bool quiet = parameters.Get<bool>("quiet");
-
-  CsrT csr;
-  // Assign pointers into gunrock graph format
-  csr.Allocate(num_nodes, num_edges, gunrock::util::HOST);
-  csr.row_offsets.SetPointer((int *)row_offsets, num_nodes + 1,
-                             gunrock::util::HOST);
-  csr.column_indices.SetPointer((int *)col_indices, num_edges,
-                                gunrock::util::HOST);
-  // csr.Move(gunrock::util::HOST, gunrock::util::DEVICE);
-
-  gunrock::util::Location target = gunrock::util::HOST;
-
   GraphT graph;
-  graph.FromCsr(csr, target, 0, quiet, true);
-  csr.Release();
+  // Assign pointers into gunrock graph format
+  graph.CsrT::Allocate(num_nodes, num_edges, gunrock::util::HOST);
+  graph.CsrT::row_offsets.SetPointer(row_offsets, gunrock::util::HOST);
+  graph.CsrT::column_indices.SetPointer(col_indices, gunrock::util::HOST);
+  graph.FromCsr(graph.csr(), true, quiet);
   gunrock::graphio::LoadGraph(parameters, graph);
 
-  // Run the PR
-  double elapsed_time = gunrock_pagerank(parameters, graph, node_ids, ranks);
+  // Run the gcn_graphsum
+  double elapsed_time = gcn_graphsum(parameters, graph, in, out);
 
   // Cleanup
-  // graph.Release();
-  // srcs.clear();
+  graph.Release();
 
   return elapsed_time;
 }
