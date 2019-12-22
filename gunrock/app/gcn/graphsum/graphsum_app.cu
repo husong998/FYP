@@ -52,11 +52,11 @@ double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const 
   // Allocate problem and enactor on GPU, and initialize them
   ProblemT problem(parameters);
   EnactorT enactor;
-  problem.Init(graph, dim, target);
-  enactor.Init(problem, dim, target);
+  problem.Init(graph, dim, in, target);
+  enactor.Init(problem, dim, in, target);
 
-  problem.Reset(src, target);
-  enactor.Reset(src, target);
+  problem.Reset();
+  enactor.Reset();
 
   cpu_timer.Start();
   enactor.Enact();
