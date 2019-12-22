@@ -22,7 +22,8 @@
 
 namespace gunrock {
 namespace app {
-namespace sssp {
+namespace gcn {
+namespace graphsum {
 
 /**
  * @brief Speciflying parameters for SSSP Enactor
@@ -40,7 +41,7 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  * @tparam EnactorT Type of enactor
  */
 template <typename EnactorT>
-struct SSSPIterationLoop
+struct GraphsumIterationLoop
     : public IterationLoopBase<EnactorT, Use_FullQ | Push |
                                              (((EnactorT::Problem::FLAG &
                                                 Mark_Predecessors) != 0)
@@ -58,7 +59,7 @@ struct SSSPIterationLoop
                                                : 0x0)>
       BaseIterationLoop;
 
-  SSSPIterationLoop() : BaseIterationLoop() {}
+  GraphsumIterationLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -73,67 +74,33 @@ struct SSSPIterationLoop
             ->enactor_slices[this->gpu_num * this->enactor->num_gpus + peer_];
     auto &enactor_stats = enactor_slice.enactor_stats;
     auto &graph = data_slice.sub_graph[0];
-    auto &distances = data_slice.distances;
-    auto &labels = data_slice.labels;
-    auto &preds = data_slice.preds;
-    // auto         &row_offsets        =   graph.CsrT::row_offsets;
-    auto &weights = graph.CsrT::edge_values;
-    auto &original_vertex = graph.GpT::original_vertex;
     auto &frontier = enactor_slice.frontier;
     auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
-    // auto         &stream             =   enactor_slice.stream;
     auto &iteration = enactor_stats.iteration;
+    auto &dim = data_slice.dim;
+    auto &in = data_slice.in;
+    auto &out = data_slice.out;
 
     // The advance operation
     auto advance_lambda =
-        [distances, weights, original_vertex, preds] __host__ __device__(
+        [] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      ValueT src_distance = distances[src];
-      ValueT edge_weight = weights[edge_id];
-      ValueT new_distance = src_distance + edge_weight;
-
-      ValueT temp_distance = atomicMin(distances + dest, new_distance);
-      if (new_distance < temp_distance) {
-        if (!preds.isEmpty()) preds[dest] = src;
-        return true;
-      }
-      return false;
-    };
-
-    // The filter operation
-    auto filter_lambda = [labels, iteration] __host__ __device__(
-                             const VertexT &src, VertexT &dest,
-                             const SizeT &edge_id, const VertexT &input_item,
-                             const SizeT &input_pos,
-                             SizeT &output_pos) -> bool {
-      if (!util::isValid(dest)) return false;
-      if (labels[dest] == iteration) return false;
-      labels[dest] = iteration;
+      ValueT coef = graph.GetNeighborListLength(src) * graph.GetNeighborListLength(dest);
+      coef = 1.0 / coef;
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + dest * dim + i, in + src * dim + i);
       return true;
     };
 
-    oprtr_parameters.label = iteration + 1;
-    // Call the advance operator, using the advance operation
-    oprtr::Advance<oprtr::OprtrType_V2V>(graph.csr(), frontier.V_Q(),
-                                         frontier.Next_V_Q(), oprtr_parameters,
-                                         advance_lambda, filter_lambda);
-
-    if (oprtr_parameters.advance_mode != "LB_CULL" &&
-        oprtr_parameters.advance_mode != "LB_LIGHT_CULL") {
-      frontier.queue_reset = false;
-      // Call the filter operator, using the filter operation
-      oprtr::Filter<oprtr::OprtrType_V2V>(graph.csr(), frontier.V_Q(),
-                                          frontier.Next_V_Q(), oprtr_parameters,
-                                          filter_lambda);
-    }
-
-    // Get back the resulted frontier length
-    GUARD_CU(frontier.work_progress.GetQueueLength(
-        frontier.queue_index, frontier.queue_length, false,
-        oprtr_parameters.stream, true));
+    frontier.queue_length = local_vertices.GetSize();
+    frontier.queue_reset = true;
+    oprtr_parameters.advance_mode = "ALL_EDGES";
+    GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
+        graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
+        advance_op));
 
     return retval;
   }
@@ -150,35 +117,7 @@ struct SSSPIterationLoop
    */
   template <int NUM_VERTEX_ASSOCIATES, int NUM_VALUE__ASSOCIATES>
   cudaError_t ExpandIncoming(SizeT &received_length, int peer_) {
-    auto &data_slice = this->enactor->problem->data_slices[this->gpu_num][0];
-    auto &enactor_slice =
-        this->enactor
-            ->enactor_slices[this->gpu_num * this->enactor->num_gpus + peer_];
-    auto iteration = enactor_slice.enactor_stats.iteration;
-    auto &distances = data_slice.distances;
-    auto &labels = data_slice.labels;
-    auto &preds = data_slice.preds;
-    auto label = this->enactor->mgpu_slices[this->gpu_num]
-                     .in_iteration[iteration % 2][peer_];
-
-    auto expand_op = [distances, labels, label, preds] __host__ __device__(
-                         VertexT & key, const SizeT &in_pos,
-                         VertexT *vertex_associate_ins,
-                         ValueT *value__associate_ins) -> bool {
-      ValueT in_val = value__associate_ins[in_pos];
-      ValueT old_val = atomicMin(distances + key, in_val);
-      if (old_val <= in_val) return false;
-      if (labels[key] == label) return false;
-      labels[key] = label;
-      if (!preds.isEmpty()) preds[key] = vertex_associate_ins[in_pos];
-      return true;
-    };
-
-    cudaError_t retval =
-        BaseIterationLoop::template ExpandIncomingBase<NUM_VERTEX_ASSOCIATES,
-                                                       NUM_VALUE__ASSOCIATES>(
-            received_length, peer_, expand_op);
-    return retval;
+    return cudaSuccess;
   }
 };  // end of SSSPIteration
 
@@ -217,7 +156,7 @@ class Enactor
    */
 
   /**
-   * @brief SSSPEnactor constructor
+   * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
     this->max_num_vertex_associates =
@@ -229,7 +168,7 @@ class Enactor
    * @brief SSSPEnactor destructor
    */
   virtual ~Enactor() {
-    // Release();
+     Release();
   }
 
   /*
@@ -297,12 +236,15 @@ class Enactor
         for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
           auto &frontier =
               this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
-          frontier.queue_length = (peer_ == 0) ? 1 : 0;
-          if (peer_ == 0) {
-            GUARD_CU(frontier.V_Q()->ForEach(
-                [src] __host__ __device__(VertexT & v) { v = src; }, 1, target,
-                0));
-          }
+          // TODO: check whether the frontier is initialized properly
+          frontier.queue_length =
+              (peer != 0)
+              ? 0
+              : this->problem->data_slices[gpu]->local_vertices.GetSize();
+          frontier.queue_index = 0;  // Work queue index
+          frontier.queue_reset = true;
+          this->enactor_slices[gpu * this->num_gpus + peer]
+              .enactor_stats.iteration = 0;
         }
       }
 
@@ -338,14 +280,15 @@ class Enactor
   cudaError_t Enact(VertexT src) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(this->Run_Threads(this));
-    util::PrintMsg("GPU SSSP Done.", this->flag & Debug);
+    util::PrintMsg("GPU graphsum Done.", this->flag & Debug);
     return retval;
   }
 
   /** @} */
 };
 
-}  // namespace sssp
+}  // namespace grpahsum
+}  // namespace gcn
 }  // namespace app
 }  // namespace gunrock
 
