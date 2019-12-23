@@ -17,12 +17,11 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/gtc/gtc_problem.cuh>
+#include <gunrock/app/graphsum/graphsum_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 namespace gunrock {
 namespace app {
-namespace gcn {
 namespace graphsum {
 
 /**
@@ -79,28 +78,31 @@ struct GraphsumIterationLoop
     auto &retval = enactor_stats.retval;
     auto &iteration = enactor_stats.iteration;
     auto &dim = data_slice.dim;
-    auto &in = data_slice.in;
-    auto &out = data_slice.out;
+    auto &in = data_slice.input;
+    auto &out = data_slice.output;
+    auto &local_vertices = data_slice.local_vertices;
 
     // The advance operation
     auto advance_lambda =
-        [] __host__ __device__(
+        [in, out, graph, dim] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      ValueT coef = graph.GetNeighborListLength(src) * graph.GetNeighborListLength(dest);
-      coef = 1.0 / coef;
+      ValueT coef = (long long)graph.GetNeighborListLength(src) *
+          graph.GetNeighborListLength(dest);
+      coef = 1.0 / sqrt(coef);
       for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, in + src * dim + i);
+        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
-
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";
+    auto null_ptr = &local_vertices;
+    null_ptr = NULL;
     GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
         graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_op));
+        advance_lambda));
 
     return retval;
   }
@@ -144,7 +146,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef SSSPIterationLoop<EnactorT> IterationT;
+  typedef GraphsumIterationLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;
@@ -202,11 +204,6 @@ class Enactor
       auto &graph = problem.sub_graphs[gpu];
       GUARD_CU(enactor_slice.frontier.Allocate(graph.nodes, graph.edges,
                                                this->queue_factors));
-
-      for (int peer = 0; peer < this->num_gpus; peer++) {
-        this->enactor_slices[gpu * this->num_gpus + peer]
-            .oprtr_parameters.labels = &(problem.data_slices[gpu]->labels);
-      }
     }
 
     iterations = new IterationT[this->num_gpus];
@@ -225,36 +222,25 @@ class Enactor
    * @param[in] target Target location of data
    * \return cudaError_t error message(s), if any
    */
-  cudaError_t Reset(VertexT src, util::Location target = util::DEVICE) {
+  cudaError_t Reset(util::Location target = util::DEVICE) {
     typedef typename GraphT::GpT GpT;
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseEnactor::Reset(target));
     for (int gpu = 0; gpu < this->num_gpus; gpu++) {
-      if ((this->num_gpus == 1) ||
-          (gpu == this->problem->org_graph->GpT::partition_table[src])) {
-        this->thread_slices[gpu].init_size = 1;
-        for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
-          auto &frontier =
-              this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
-          // TODO: check whether the frontier is initialized properly
-          frontier.queue_length =
-              (peer != 0)
-              ? 0
-              : this->problem->data_slices[gpu]->local_vertices.GetSize();
-          frontier.queue_index = 0;  // Work queue index
-          frontier.queue_reset = true;
-          this->enactor_slices[gpu * this->num_gpus + peer]
-              .enactor_stats.iteration = 0;
-        }
+      for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
+        auto &frontier =
+            this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
+        // TODO: check whether the frontier is initialized properly
+        frontier.queue_length =
+            (peer_ != 0)
+            ? 0
+            : this->problem->data_slices[gpu]->local_vertices.GetSize();
+        frontier.queue_index = 0;  // Work queue index
+        frontier.queue_reset = true;
+        this->enactor_slices[gpu * this->num_gpus + peer_]
+            .enactor_stats.iteration = 0;
       }
 
-      else {
-        this->thread_slices[gpu].init_size = 0;
-        for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
-          this->enactor_slices[gpu * this->num_gpus + peer_]
-              .frontier.queue_length = 0;
-        }
-      }
     }
     GUARD_CU(BaseEnactor::Sync());
     return retval;
@@ -277,7 +263,7 @@ class Enactor
    * @param[in] src Source node to start primitive.
    * \return cudaError_t error message(s), if any
    */
-  cudaError_t Enact(VertexT src) {
+  cudaError_t Enact() {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(this->Run_Threads(this));
     util::PrintMsg("GPU graphsum Done.", this->flag & Debug);
@@ -288,7 +274,6 @@ class Enactor
 };
 
 }  // namespace grpahsum
-}  // namespace gcn
 }  // namespace app
 }  // namespace gunrock
 

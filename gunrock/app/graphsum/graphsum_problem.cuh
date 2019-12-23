@@ -18,7 +18,6 @@
 
 namespace gunrock {
 namespace app {
-namespace gcn {
 namespace graphsum {
 /**
  * @brief Speciflying parameters for graphsum Problem
@@ -67,6 +66,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    */
   struct DataSlice : BaseDataSlice {
     util::Array1D<SizeT, ValueT> input, output;
+    util::Array1D<SizeT, VertexT> local_vertices;
     int dim;
 
     /*
@@ -116,6 +116,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
       GUARD_CU(input.Allocate(sub_graph.nodes * dim, target));
       GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
+      GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;
@@ -126,7 +127,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] target      Targeting device location
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Reset(util::Location target = util::DEVICE, const ValueT *in) {
+    cudaError_t Reset(const ValueT *in, util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
       SizeT nodes = this->sub_graph->nodes;
 
@@ -134,8 +135,19 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(output.EnsureSize_(nodes * dim, target));
 
       // Initialize input matrix
-      GUARD_CU(input.SetPointer(in, sub_graph.nodes * dim));
-      GUARD_CU(input.Move(util::HOST, target));
+      GUARD_CU(input.EnsureSize_(nodes * dim));
+      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
+      GUARD_CU(input.ForAll(
+          [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
+            in_[pos] = in[pos];
+          }, nodes * dim, target
+          ));
+
+      // Initizlize local vertices
+      GUARD_CU(local_vertices.ForAll(
+          [] __host__ __device__(VertexT * l_vertices, const SizeT &pos) {
+        l_vertices[pos] = pos;
+      }, nodes, target));
 
       // Initialize output matrix to be all 0
       GUARD_CU(output.ForEach(
@@ -204,8 +216,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         GUARD_CU(util::SetDevice(this->gpu_idx[0]));
 
         GUARD_CU(
-            data_slice.out.SetPointer(out, nodes, util::HOST));
-        GUARD_CU(data_slice.out.Move(util::DEVICE, util::HOST));
+            data_slice.output.SetPointer(out, nodes, util::HOST));
+        GUARD_CU(data_slice.output.Move(util::DEVICE, util::HOST));
       }
     }
 
@@ -222,7 +234,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, const ValueT *in, util::Location target = util::DEVICE) {
+  cudaError_t Init(GraphT &graph, const int dim, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -234,7 +246,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
 
       auto &data_slice = data_slices[gpu][0];
-      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, in, this->num_gpus,
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag));
     }  // end for (gpu)
 
@@ -246,13 +258,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @param[in] location Memory location to work on
    * \return cudaError_t Error message(s), if any
    */
-  cudaError_t Reset(util::Location target = util::DEVICE) {
+  cudaError_t Reset(const ValueT *in, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-      GUARD_CU(data_slices[gpu]->Reset(target));
+      GUARD_CU(data_slices[gpu]->Reset(in, target));
       GUARD_CU(data_slices[gpu].Move(util::HOST, target));
     }
 
@@ -267,7 +279,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 };
 
 }  // namespace graphsum
-}  // namespace gcn
 }  // namespace app
 }  // namespace gunrock
 
