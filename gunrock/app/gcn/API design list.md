@@ -4,6 +4,8 @@
 
 ### SparseMatmul
 
+SparseMatul(CSR *A, Matrix *B) -> Matrix C
+
 #### param[in]: 
 
 Matrix A in CSR format
@@ -19,6 +21,8 @@ output matrix
 Similar to the graphsum layer that has been implemented
 
 ### Graphsum
+
+GraphSum(Graph g, Matrix *A) -> Maxtrix C
 
 #### param[in]
 
