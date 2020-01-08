@@ -140,7 +140,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(input.ForAll(
           [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
             in_[pos] = in[pos];
-          }, nodes * dim, target
+          }, nodes * dim, util::HOST
           ));
 
       // Initizlize local vertices
