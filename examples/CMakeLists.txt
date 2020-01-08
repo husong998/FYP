@@ -3,6 +3,7 @@
 # begin /* Add premitives' subdirectories */
 
 add_subdirectory(graphsum)
+add_subdirectory(gtc)
 
 # end /* Add premitives' subdirectories */
 
