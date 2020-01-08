@@ -91,10 +91,11 @@ struct GraphsumIterationLoop
       ValueT coef = (long long)graph.GetNeighborListLength(src) *
           graph.GetNeighborListLength(dest);
       coef = 1.0 / sqrt(coef);
-      for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
+//      for (int i = 0; i < dim; i++)
+//        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
+    std::cerr << "iteration: " << iteration << "\n";
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";
@@ -104,6 +105,7 @@ struct GraphsumIterationLoop
         graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
         advance_lambda));
 
+    enactor_stats.edges_queued[0] += graph.edges;
     return retval;
   }
 
