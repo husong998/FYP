@@ -114,7 +114,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
-      GUARD_CU(input.Allocate(sub_graph.nodes * dim, target));
+      GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
       GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
       GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
