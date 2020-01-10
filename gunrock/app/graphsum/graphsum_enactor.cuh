@@ -83,8 +83,6 @@ struct GraphsumIterationLoop
     auto &local_vertices = data_slice.local_vertices;
 
     // The advance operation
-    in.Print();
-    out.Print();
     auto advance_lambda =
         [in, out, graph, dim] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
