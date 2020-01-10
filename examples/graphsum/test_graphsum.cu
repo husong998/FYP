@@ -59,7 +59,7 @@ struct main_struct {
 
     int dim = parameters.Get<int>("dim");
     freopen(parameters.Get<std::string>("in").c_str(), "r", stdin);
-    freopen(parameters.Get<std::string>("out").c_str(), "w", stdout);
+//    freopen(parameters.Get<std::string>("out").c_str(), "w", stdout);
     double *in = new double[graph.nodes * dim], *out = new double[graph.nodes * dim];
     util::PrintMsg("size of in: " + std::to_string(graph.nodes * dim));
     for (int i = 0; i < graph.nodes * dim; i++) scanf("%lf", in + i);

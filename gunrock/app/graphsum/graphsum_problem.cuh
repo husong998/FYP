@@ -75,6 +75,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     DataSlice() : BaseDataSlice() {
       input.SetName("input");
       output.SetName("output");
+      local_vertices.SetName("local_vertices");
     }
 
     /*
@@ -115,6 +116,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
       GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
+      // Initialize input matrix
+      GUARD_CU(input.EnsureSize_(nodes * dim));
+      GUARD_CU(input.ForAll(
+               [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
+        in_[pos] = in[pos];
+      }, nodes * dim, util::HOST
+               ));
+      input.Move(util::HOST, util::DEVICE);
       GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
       GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
@@ -133,15 +142,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       // Ensure data are allocated
       GUARD_CU(output.EnsureSize_(nodes * dim, target));
-
-      // Initialize input matrix
-      GUARD_CU(input.EnsureSize_(nodes * dim));
-      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
-      GUARD_CU(input.ForAll(
-          [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
-            in_[pos] = in[pos];
-          }, nodes * dim, util::HOST
-          ));
 
       // Initizlize local vertices
       GUARD_CU(local_vertices.ForAll(

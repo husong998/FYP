@@ -83,6 +83,8 @@ struct GraphsumIterationLoop
     auto &local_vertices = data_slice.local_vertices;
 
     // The advance operation
+    in.Print();
+    out.Print();
     auto advance_lambda =
         [in, out, graph, dim] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
@@ -107,6 +109,38 @@ struct GraphsumIterationLoop
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;
+  }
+
+  bool Stop_Condition(int gpu_num = 0) {
+    auto &enactor_slices = this->enactor->enactor_slices;
+    int num_gpus = this->enactor->num_gpus;
+    for (int gpu = 0; gpu < num_gpus * num_gpus; gpu++) {
+      auto &retval = enactor_slices[gpu].enactor_stats.retval;
+      if (retval == cudaSuccess) continue;
+      printf("(CUDA error %d @ GPU %d: %s\n", retval, gpu % num_gpus,
+             cudaGetErrorString(retval));
+      fflush(stdout);
+      return true;
+    }
+
+    auto &data_slices = this->enactor->problem->data_slices;
+//    bool all_zero = true;
+//    for (int gpu = 0; gpu < num_gpus; gpu++)
+//      if (data_slices[gpu]->num_updated_vertices)  // PR_queue_length > 0)
+//      {
+//        // printf("data_slice[%d].PR_queue_length = %d\n", gpu,
+//        // data_slice[gpu]->PR_queue_length);
+//        all_zero = false;
+//      }
+//    if (all_zero) return true;
+
+    for (int gpu = 0; gpu < num_gpus; gpu++)
+      if (enactor_slices[gpu * num_gpus].enactor_stats.iteration < 1) {
+        // printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats[gpu
+        // * num_gpus].iteration);
+        return false;
+      }
+    return true;
   }
 
   /**
