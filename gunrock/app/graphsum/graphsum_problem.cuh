@@ -116,14 +116,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
       GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
-      // Initialize input matrix
-      GUARD_CU(input.EnsureSize_(nodes * dim));
-      GUARD_CU(input.ForAll(
-               [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
-        in_[pos] = in[pos];
-      }, nodes * dim, util::HOST
-               ));
-      input.Move(util::HOST, util::DEVICE);
       GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
       GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
@@ -136,7 +128,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] target      Targeting device location
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Reset(const ValueT *in, util::Location target = util::DEVICE) {
+    cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
       SizeT nodes = this->sub_graph->nodes;
 
@@ -234,7 +226,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, util::Location target = util::DEVICE) {
+  cudaError_t Init(GraphT &graph, const int dim, const ValueT *in,
+      util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -248,6 +241,18 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       auto &data_slice = data_slices[gpu][0];
       GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag));
+
+      // Initialize input matrix
+      auto nodes = this->sub_graphs[gpu].nodes;
+      GUARD_CU(data_slice.input.EnsureSize_(nodes * dim));
+      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
+      GUARD_CU(data_slice.input.ForAll(
+               [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
+        in_[pos] = in[pos];
+      }, nodes * dim, util::HOST
+               ));
+      data_slice.input.Move(util::HOST, util::DEVICE);
+      data_slice.input.Print();
     }  // end for (gpu)
 
     return retval;
@@ -264,7 +269,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-      GUARD_CU(data_slices[gpu]->Reset(in, target));
+      GUARD_CU(data_slices[gpu]->Reset(target));
       GUARD_CU(data_slices[gpu].Move(util::HOST, target));
     }
 
