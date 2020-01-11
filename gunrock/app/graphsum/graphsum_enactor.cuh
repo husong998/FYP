@@ -91,8 +91,8 @@ struct GraphsumIterationLoop
       ValueT coef = (long long)graph.GetNeighborListLength(src) *
           graph.GetNeighborListLength(dest);
       coef = 1.0 / sqrt(coef);
-//      for (int i = 0; i < dim; i++)
-//        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
     std::cerr << "iteration: " << iteration << "\n";
@@ -121,7 +121,7 @@ struct GraphsumIterationLoop
       return true;
     }
 
-    auto &data_slices = this->enactor->problem->data_slices;
+//    auto &data_slices = this->enactor->problem->data_slices;
 //    bool all_zero = true;
 //    for (int gpu = 0; gpu < num_gpus; gpu++)
 //      if (data_slices[gpu]->num_updated_vertices)  // PR_queue_length > 0)
