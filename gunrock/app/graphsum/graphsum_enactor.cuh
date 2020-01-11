@@ -41,21 +41,13 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  */
 template <typename EnactorT>
 struct GraphsumIterationLoop
-    : public IterationLoopBase<EnactorT, Use_FullQ | Push |
-                                             (((EnactorT::Problem::FLAG &
-                                                Mark_Predecessors) != 0)
-                                                  ? Update_Predecessors
-                                                  : 0x0)> {
+    : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
   typedef typename EnactorT::ValueT ValueT;
   typedef typename EnactorT::Problem::GraphT::CsrT CsrT;
   typedef typename EnactorT::Problem::GraphT::GpT GpT;
-  typedef IterationLoopBase<EnactorT, Use_FullQ | Push |
-                                          (((EnactorT::Problem::FLAG &
-                                             Mark_Predecessors) != 0)
-                                               ? Update_Predecessors
-                                               : 0x0)>
+  typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
   GraphsumIterationLoop() : BaseIterationLoop() {}
@@ -195,9 +187,6 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
-    this->max_num_vertex_associates =
-        (Problem::FLAG & Mark_Predecessors) != 0 ? 1 : 0;
-    this->max_num_value__associates = 1;
   }
 
   /**
@@ -286,8 +275,7 @@ class Enactor
    * \return cudaError_t error message(s), if any
    */
   cudaError_t Run(ThreadSlice &thread_data) {
-    gunrock::app::Iteration_Loop<
-        ((Enactor::Problem::FLAG & Mark_Predecessors) != 0) ? 1 : 0, 1,
+    gunrock::app::Iteration_Loop<0, 1,
         IterationT>(thread_data, iterations[thread_data.thread_num]);
     return cudaSuccess;
   }
