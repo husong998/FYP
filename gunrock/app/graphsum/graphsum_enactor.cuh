@@ -271,12 +271,11 @@ class Enactor
 
   /**
    * @brief one run of sssp, to be called within GunrockThread
-   * @param thread_data Data for the CPU thread
+   * @param thread_data Data for the CPU threadt
    * \return cudaError_t error message(s), if any
    */
   cudaError_t Run(ThreadSlice &thread_data) {
-    gunrock::app::Iteration_Loop<0, 1,
-        IterationT>(thread_data, iterations[thread_data.thread_num]);
+    gunrock::app::Iteration_Loop<0, 1, IterationT>(thread_data, iterations[thread_data.thread_num]);
     return cudaSuccess;
   }
 
