@@ -41,21 +41,13 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  */
 template <typename EnactorT>
 struct GraphsumIterationLoop
-    : public IterationLoopBase<EnactorT, Use_FullQ | Push |
-                                             (((EnactorT::Problem::FLAG &
-                                                Mark_Predecessors) != 0)
-                                                  ? Update_Predecessors
-                                                  : 0x0)> {
+    : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
   typedef typename EnactorT::ValueT ValueT;
   typedef typename EnactorT::Problem::GraphT::CsrT CsrT;
   typedef typename EnactorT::Problem::GraphT::GpT GpT;
-  typedef IterationLoopBase<EnactorT, Use_FullQ | Push |
-                                          (((EnactorT::Problem::FLAG &
-                                             Mark_Predecessors) != 0)
-                                               ? Update_Predecessors
-                                               : 0x0)>
+  typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
   GraphsumIterationLoop() : BaseIterationLoop() {}
@@ -91,8 +83,8 @@ struct GraphsumIterationLoop
       ValueT coef = (long long)graph.GetNeighborListLength(src) *
           graph.GetNeighborListLength(dest);
       coef = 1.0 / sqrt(coef);
-//      for (int i = 0; i < dim; i++)
-//        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
     std::cerr << "iteration: " << iteration << "\n";
@@ -107,6 +99,38 @@ struct GraphsumIterationLoop
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;
+  }
+
+  bool Stop_Condition(int gpu_num = 0) {
+    auto &enactor_slices = this->enactor->enactor_slices;
+    int num_gpus = this->enactor->num_gpus;
+    for (int gpu = 0; gpu < num_gpus * num_gpus; gpu++) {
+      auto &retval = enactor_slices[gpu].enactor_stats.retval;
+      if (retval == cudaSuccess) continue;
+      printf("(CUDA error %d @ GPU %d: %s\n", retval, gpu % num_gpus,
+             cudaGetErrorString(retval));
+      fflush(stdout);
+      return true;
+    }
+
+//    auto &data_slices = this->enactor->problem->data_slices;
+//    bool all_zero = true;
+//    for (int gpu = 0; gpu < num_gpus; gpu++)
+//      if (data_slices[gpu]->num_updated_vertices)  // PR_queue_length > 0)
+//      {
+//        // printf("data_slice[%d].PR_queue_length = %d\n", gpu,
+//        // data_slice[gpu]->PR_queue_length);
+//        all_zero = false;
+//      }
+//    if (all_zero) return true;
+
+    for (int gpu = 0; gpu < num_gpus; gpu++)
+      if (enactor_slices[gpu * num_gpus].enactor_stats.iteration < 1) {
+        // printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats[gpu
+        // * num_gpus].iteration);
+        return false;
+      }
+    return true;
   }
 
   /**
@@ -163,9 +187,6 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
-    this->max_num_vertex_associates =
-        (Problem::FLAG & Mark_Predecessors) != 0 ? 1 : 0;
-    this->max_num_value__associates = 1;
   }
 
   /**
@@ -254,8 +275,7 @@ class Enactor
    * \return cudaError_t error message(s), if any
    */
   cudaError_t Run(ThreadSlice &thread_data) {
-    gunrock::app::Iteration_Loop<
-        ((Enactor::Problem::FLAG & Mark_Predecessors) != 0) ? 1 : 0, 1,
+    gunrock::app::Iteration_Loop<0, 1,
         IterationT>(thread_data, iterations[thread_data.thread_num]);
     return cudaSuccess;
   }
