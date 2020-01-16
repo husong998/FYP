@@ -22,7 +22,7 @@
 #include <gunrock/app/test_base.cuh>
 
 // single-source shortest path includes
-#include <gunrock/app/graphsum/graphsum_enactor.cuh>
+#include <gunrock/app/sparseMatMul/sparseMatMul_enactor.cuh>
 
 /**
  * @brief      graphsum layer of GCN
@@ -41,7 +41,7 @@
 
 namespace gunrock {
 namespace app {
-namespace graphsum {
+namespace sparseMatMul {
 
 cudaError_t UseParameters(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
@@ -49,26 +49,12 @@ cudaError_t UseParameters(util::Parameters &parameters) {
   GUARD_CU(UseParameters_problem(parameters));
   GUARD_CU(UseParameters_enactor(parameters));
 
-  GUARD_CU(parameters.Use<std::string>(
-      "in",
-      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      "invalid",
-      "input file name to feature matrix", __FILE__, __LINE__
-      ));
-
-  GUARD_CU(parameters.Use<int>(
-      "dim",
-      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      -1,
-      "feature vector dimension", __FILE__, __LINE__
-      ));
-
-  GUARD_CU(parameters.Use<std::string>(
-      "out",
-      util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      "out",
-      "output file name", __FILE__, __LINE__
-      ));
+//  GUARD_CU(parameters.Use<std::string>(
+//      "in",
+//      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+//      "invalid",
+//      "input file name to feature matrix", __FILE__, __LINE__
+//      ));
 
   return retval;
 }
@@ -79,11 +65,11 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
+double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
                     ValueT *in, ValueT *out) {
   typedef typename GraphT::VertexT VertexT;
-  typedef gunrock::app::graphsum::Problem<GraphT> ProblemT;
-  typedef gunrock::app::graphsum::Enactor<ProblemT> EnactorT;
+  typedef gunrock::app::sparseMatMul::Problem<GraphT> ProblemT;
+  typedef gunrock::app::sparseMatMul::Enactor<ProblemT> EnactorT;
   gunrock::util::CpuTimer cpu_timer;
   gunrock::util::Location target = gunrock::util::DEVICE;
   double total_time = 0;
@@ -131,11 +117,13 @@ double graphsum(const SizeT num_nodes, const SizeT num_edges,
             const SizeT *row_offsets, const VertexT *col_indices, const int dim,
             ValueT *in, ValueT *out) {
   typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
-  gunrock::graph::HAS_CSR> GraphT;
+                                           gunrock::graph::HAS_EDGE_VALUES |
+                                               gunrock::graph::HAS_CSR>
+      GraphT;
   typedef typename GraphT::CsrT CsrT;
 
   // Setup parameters
-  gunrock::util::Parameters parameters("sparseMatMul");
+  gunrock::util::Parameters parameters("gcn_graphsum");
   gunrock::graphio::UseParameters(parameters);
   gunrock::app::graphsum::UseParameters(parameters);
   gunrock::app::UseParameters_test(parameters);
