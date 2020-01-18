@@ -113,9 +113,9 @@ double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const 
  * @return     double      Return accumulated elapsed times for all runs
  */
 template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
-double graphsum(const SizeT num_nodes, const SizeT num_edges,
-            const SizeT *row_offsets, const VertexT *col_indices, const int dim,
-            ValueT *in, ValueT *out) {
+double sparseMatMul(const SizeT n_rows, const SizeT nnz,
+    const SizeT *row_offsets, const VertexT *col_indices,
+    const ValueT *vals, const int dim, ValueT *b, ValueT *c) {
   typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
                                            gunrock::graph::HAS_EDGE_VALUES |
                                                gunrock::graph::HAS_CSR>
@@ -123,9 +123,9 @@ double graphsum(const SizeT num_nodes, const SizeT num_edges,
   typedef typename GraphT::CsrT CsrT;
 
   // Setup parameters
-  gunrock::util::Parameters parameters("gcn_graphsum");
+  gunrock::util::Parameters parameters("sparseMatMul");
   gunrock::graphio::UseParameters(parameters);
-  gunrock::app::graphsum::UseParameters(parameters);
+  gunrock::app::sparseMatMul::UseParameters(parameters);
   gunrock::app::UseParameters_test(parameters);
   parameters.Parse_CommandLine(0, NULL);
   parameters.Set("graph-type", "by-pass");
@@ -133,14 +133,15 @@ double graphsum(const SizeT num_nodes, const SizeT num_edges,
   bool quiet = parameters.Get<bool>("quiet");
   GraphT graph;
   // Assign pointers into gunrock graph format
-  graph.CsrT::Allocate(num_nodes, num_edges, gunrock::util::HOST);
+  graph.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
   graph.CsrT::row_offsets.SetPointer(row_offsets, gunrock::util::HOST);
   graph.CsrT::column_indices.SetPointer(col_indices, gunrock::util::HOST);
+  graph.CsrT::edge_values.SetPointer(vals, nnz, gunrock::util::HOST);
   graph.FromCsr(graph.csr(), true, quiet);
   gunrock::graphio::LoadGraph(parameters, graph);
 
   // Run the gcn_graphsum
-  double elapsed_time = gcn_graphsum(parameters, graph, in, out);
+  double elapsed_time = sparseMatMul(parameters, graph, b, c);
 
   // Cleanup
   graph.Release();

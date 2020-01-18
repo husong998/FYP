@@ -87,7 +87,7 @@ struct GraphsumIterationLoop
         atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
-    std::cerr << "iteration: " << iteration << "\n";
+//    std::cerr << "iteration: " << iteration << "\n";
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";

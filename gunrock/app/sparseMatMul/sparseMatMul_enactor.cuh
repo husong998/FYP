@@ -73,6 +73,7 @@ struct GraphsumIterationLoop
     auto &in = data_slice.input;
     auto &out = data_slice.output;
     auto &local_vertices = data_slice.local_vertices;
+    auto &weights = graph.CsrT::edge_values;
 
     // The advance operation
     auto advance_lambda =
@@ -80,14 +81,11 @@ struct GraphsumIterationLoop
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      ValueT coef = (long long)graph.GetNeighborListLength(src) *
-          graph.GetNeighborListLength(dest);
-      coef = 1.0 / sqrt(coef);
       for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
+        atomicAdd(out + dest * dim + i, weights[edge_id] * in[dest * dim + i]);
       return true;
     };
-    std::cerr << "iteration: " << iteration << "\n";
+//    std::cerr << "iteration: " << iteration << "\n";
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";

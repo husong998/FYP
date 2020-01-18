@@ -28,10 +28,6 @@ cudaError_t UseParameters_problem(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
 
   GUARD_CU(gunrock::app::UseParameters_problem(parameters));
-  GUARD_CU(parameters.Use<bool>(
-      "mark-pred",
-      util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
-      false, "Whether to mark predecessor info.", __FILE__, __LINE__));
 
   return retval;
 }
