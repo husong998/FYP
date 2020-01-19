@@ -68,7 +68,7 @@ struct GraphsumIterationLoop
     auto &frontier = enactor_slice.frontier;
     auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
-    auto &iteration = enactor_stats.iteration;
+//    auto &iteration = enactor_stats.iteration;
     auto &dim = data_slice.dim;
     auto &in = data_slice.input;
     auto &out = data_slice.output;
@@ -77,7 +77,7 @@ struct GraphsumIterationLoop
 
     // The advance operation
     auto advance_lambda =
-        [in, out, graph, dim] __host__ __device__(
+        [in, out, graph, dim, weights] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {

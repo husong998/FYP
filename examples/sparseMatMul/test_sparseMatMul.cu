@@ -12,7 +12,7 @@
  * @brief Simple test driver program for PageRank.
  */
 
-#include <gunrock/app/graphsum/graphsum_app.cu>
+#include <gunrock/app/sparseMatMul/sparseMatMul_app.cu>
 #include <gunrock/app/test_base.cuh>
 #include <cstdio>
 #include <iostream>
@@ -27,6 +27,53 @@ using namespace gunrock;
  * @brief Enclosure to the main function
  */
 struct main_struct {
+  void readFeature(std::ifstream& svmlight_file, int* row_offsets, int* col_offsets, double* val,
+                   int& dim, int& n_rows, int& nnz) {
+    n_rows = 0, nnz = 0;
+    std::vector<int> indptr, indices;
+    std::vector<double> feature_val;
+    indptr.push_back(0);
+
+    int max_idx = 0, max_label = 0;
+    while(true) {
+      std::string line;
+      getline(svmlight_file, line);
+      if (svmlight_file.eof()) break;
+      indptr.push_back(indptr.back());
+      std::istringstream ss(line);
+
+      int label = -1;
+      ss >> label;
+//      labels.push_back(label);
+      if (ss.fail()) continue;
+      max_label = std::max(max_label, label);
+
+      while (true) {
+        std::string kv;
+        ss >> kv;
+        if(ss.fail()) break;
+        std::istringstream kv_ss(kv);
+
+        int k;
+        float v;
+        char col;
+        kv_ss >> k >> col >> v;
+
+        feature_val.push_back(v);
+        indices.push_back(k);
+        indptr.back() += 1;
+        max_idx = std::max(max_idx, k);
+      }
+    }
+    row_offsets = indptr.data();
+    col_offsets = indices.data();
+    val = feature_val.data();
+    n_rows = indptr.size() - 1;
+    nnz = indices.size();
+    dim = max_idx + 1;
+//    gcnParams->output_dim = max_label + 1;
+  }
+
   /**
    * @brief the actual main function, after type switching
    * @tparam VertexT    Type of vertex identifier
@@ -57,15 +104,20 @@ struct main_struct {
     cpu_timer.Stop();
     parameters.Set("load-time", cpu_timer.ElapsedMillis());
 
-    int dim = parameters.Get<int>("dim");
-    freopen(parameters.Get<std::string>("in").c_str(), "r", stdin);
-//    freopen(parameters.Get<std::string>("out").c_str(), "w", stdout);
-    double *in = new double[graph.nodes * dim], *out = new double[graph.nodes * dim];
-    util::PrintMsg("size of in: " + std::to_string(graph.nodes * dim));
-    for (int i = 0; i < graph.nodes * dim; i++) scanf("%lf", in + i);
-    gcn_graphsum(parameters, graph, dim, in, out);
+    std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in),
+    weightfile(parameters.Get<std::string>("inw"), std::ifstream::in);
+    int *row_offsets, *col_offsets, dim, nnz, n_rows;
+    int hidden_dim = parameters.Get<int>("hidden_dim");
+    double *vals, *b, *c;
+    readFeature(featurefile, row_offsets, col_offsets, vals, dim, n_rows, nnz);
+
+    b = new double[dim * hidden_dim];
+    for (int i = 0; i < dim * hidden_dim; i++) weightfile >> b[i];
+
+    c = new double[dim * hidden_dim];
+    sparseMatMul(n_rows, nnz, row_offsets, col_offsets, vals, dim, hidden_dim, b, c);
     for (int i = 0; i < graph.nodes; i++) {
-      for (int j = 0; j < dim; j++) std::cout << out[i] * dim + j << ' ';
+      for (int j = 0; j < dim; j++) std::cout << c[i] * hidden_dim + j << ' ';
       std::cout << std::endl;
     }
     return retval;
@@ -76,7 +128,7 @@ int main(int argc, char **argv) {
   cudaError_t retval = cudaSuccess;
   util::Parameters parameters("test graphsum");
   GUARD_CU(graphio::UseParameters(parameters));
-  GUARD_CU(app::graphsum::UseParameters(parameters));
+  GUARD_CU(app::sparseMatMul::UseParameters(parameters));
   GUARD_CU(app::UseParameters_test(parameters));
   GUARD_CU(parameters.Parse_CommandLine(argc, argv));
   if (parameters.Get<bool>("help")) {

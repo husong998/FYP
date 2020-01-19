@@ -222,7 +222,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, const ValueT *in,
+  cudaError_t Init(GraphT &graph, const int dim, const int outdim, const ValueT *in,
       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
@@ -235,7 +235,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
 
       auto &data_slice = data_slices[gpu][0];
-      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, this->num_gpus,
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], outdim, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag));
 
       // Initialize input matrix
@@ -245,7 +245,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slice.input.ForAll(
                [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
         in_[pos] = in[pos];
-      }, nodes * dim, util::HOST
+      }, dim * outdim, util::HOST
                ));
       data_slice.input.Move(util::HOST, util::DEVICE);
       data_slice.input.Print();
