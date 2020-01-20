@@ -23,6 +23,7 @@
 
 // single-source shortest path includes
 #include <gunrock/app/sparseMatMul/sparseMatMul_enactor.cuh>
+#include <gunrock/app/sparseMatMul/sparseMatMul_test.cuh>
 
 /**
  * @brief      graphsum layer of GCN
@@ -53,10 +54,10 @@ cudaError_t UseParameters(util::Parameters &parameters) {
       "inx", util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
       "", "input file name to feature matrix", __FILE__, __LINE__
   ));
-  GUARD_CU(parameters.Use<std::string>(
-      "inw", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
-      "", "input file name to weight matrix", __FILE__, __LINE__
-  ));
+//  GUARD_CU(parameters.Use<std::string>(
+//      "inw", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+//      "", "input file name to weight matrix", __FILE__, __LINE__
+//  ));
   GUARD_CU(parameters.Use<int>(
       "hidden_dim", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
       0, "hidden dimension of weight matrix", __FILE__, __LINE__

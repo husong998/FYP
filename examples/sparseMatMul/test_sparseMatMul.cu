@@ -104,22 +104,21 @@ struct main_struct {
     cpu_timer.Stop();
     parameters.Set("load-time", cpu_timer.ElapsedMillis());
 
-    std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in),
-    weightfile(parameters.Get<std::string>("inw"), std::ifstream::in);
-    int *row_offsets, *col_offsets, dim, nnz, n_rows;
+    std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in);
+    int *row_offsets, *col_offsets, in_dim, nnz, n_rows;
+    double *vals, *b, *computed;
+    readFeature(featurefile, row_offsets, col_offsets, vals, in_dim, n_rows, nnz);
+
     int hidden_dim = parameters.Get<int>("hidden_dim");
-    double *vals, *b, *c;
-    readFeature(featurefile, row_offsets, col_offsets, vals, dim, n_rows, nnz);
+    double *ref_res = new double[in_dim * hidden_dim];
+    b = new double[in_dim * hidden_dim];
+    app::sparseMatMul::rand_weights(in_dim, hidden_dim, b);
+    app::sparseMatMul::CPU_Reference(row_offsets, col_offsets, vals, n_rows, b,
+        in_dim, hidden_dim, ref_res);
 
-    b = new double[dim * hidden_dim];
-    for (int i = 0; i < dim * hidden_dim; i++) weightfile >> b[i];
-
-    c = new double[dim * hidden_dim];
-    sparseMatMul(n_rows, nnz, row_offsets, col_offsets, vals, dim, hidden_dim, b, c);
-    for (int i = 0; i < graph.nodes; i++) {
-      for (int j = 0; j < dim; j++) std::cout << c[i] * hidden_dim + j << ' ';
-      std::cout << std::endl;
-    }
+    computed = new double[in_dim * hidden_dim];
+    sparseMatMul(n_rows, nnz, row_offsets, col_offsets, vals, in_dim, hidden_dim, b, computed);
+    util::CompareResults(computed, ref_res, in_dim, hidden_dim);
     return retval;
   }
 };
