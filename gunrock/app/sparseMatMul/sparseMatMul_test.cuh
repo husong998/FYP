@@ -55,7 +55,7 @@ namespace sparseMatMul {
  * @param[in]   mark_preds    Whether to compute predecessor info
  * \return      double        Time taken for the SSSP
  */
-template <typename GraphT, typename ValueT = typename GraphT::ValueT>
+
 void CPU_Reference(int *row_offsets, int *col_offsets, double *x_vals, const int n_rows,
                    double *w, const int input_dim, const int output_dim, double *out) {
   for (int i = 0; i < input_dim * output_dim; i++) out[i] = 0;

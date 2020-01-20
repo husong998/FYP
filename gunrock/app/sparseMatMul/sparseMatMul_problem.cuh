@@ -63,7 +63,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   struct DataSlice : BaseDataSlice {
     util::Array1D<SizeT, ValueT> input, output;
     util::Array1D<SizeT, VertexT> local_vertices;
-    int dim;
+    int in_dim, out_dim;
 
     /*
      * @brief Default constructor
@@ -103,16 +103,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] flag        Problem flag containling options
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Init(GraphT &sub_graph, const int dim,
+    cudaError_t Init(GraphT &sub_graph, const int in_dim, const int out_dim,
                      int num_gpus = 1, int gpu_idx = 0,
                      util::Location target = util::DEVICE,
                      ProblemFlag flag = Problem_None) {
-      this->dim = dim;
+      this->in_dim = in_dim;
+      this->out_dim = out_dim;
       cudaError_t retval = cudaSuccess;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
-      GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
-      GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
+      GUARD_CU(input.Allocate(in_dim * out_dim, util::HOST));
+      GUARD_CU(output.Allocate(sub_graph.nodes * out_dim, target));
       GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
@@ -129,7 +130,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       SizeT nodes = this->sub_graph->nodes;
 
       // Ensure data are allocated
-      GUARD_CU(output.EnsureSize_(nodes * dim, target));
+      GUARD_CU(output.EnsureSize_(nodes * out_dim, target));
 
       // Initizlize local vertices
       GUARD_CU(local_vertices.ForAll(
@@ -222,7 +223,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, const int outdim, const ValueT *in,
+  cudaError_t Init(GraphT &graph, const int in_dim, const int outdim, const ValueT *in,
       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
@@ -235,17 +236,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
 
       auto &data_slice = data_slices[gpu][0];
-      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], outdim, this->num_gpus,
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], in_dim, outdim, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag));
 
       // Initialize input matrix
       auto nodes = this->sub_graphs[gpu].nodes;
-      GUARD_CU(data_slice.input.EnsureSize_(nodes * dim));
-      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
+      GUARD_CU(data_slice.input.EnsureSize_(in_dim * outdim));
+//      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
       GUARD_CU(data_slice.input.ForAll(
                [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
         in_[pos] = in[pos];
-      }, dim * outdim, util::HOST
+      }, in_dim * outdim, util::HOST
                ));
       data_slice.input.Move(util::HOST, util::DEVICE);
       data_slice.input.Print();

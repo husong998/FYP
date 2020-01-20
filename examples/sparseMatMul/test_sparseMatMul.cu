@@ -27,11 +27,10 @@ using namespace gunrock;
  * @brief Enclosure to the main function
  */
 struct main_struct {
-  void readFeature(std::ifstream& svmlight_file, int* row_offsets, int* col_offsets, double* val,
-                   int& dim, int& n_rows, int& nnz) {
+  void readFeature(std::ifstream& svmlight_file, std::vector<int> &indptr,
+      std::vector<int> &indices, std::vector<double> &feature_val,
+      int& dim, int& n_rows, int& nnz) {
     n_rows = 0, nnz = 0;
-    std::vector<int> indptr, indices;
-    std::vector<double> feature_val;
     indptr.push_back(0);
 
     int max_idx = 0, max_label = 0;
@@ -65,9 +64,6 @@ struct main_struct {
         max_idx = std::max(max_idx, k);
       }
     }
-    row_offsets = indptr.data();
-    col_offsets = indices.data();
-    val = feature_val.data();
     n_rows = indptr.size() - 1;
     nnz = indices.size();
     dim = max_idx + 1;
@@ -105,19 +101,22 @@ struct main_struct {
     parameters.Set("load-time", cpu_timer.ElapsedMillis());
 
     std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in);
-    int *row_offsets, *col_offsets, in_dim, nnz, n_rows;
-    double *vals, *b, *computed;
+    int in_dim, nnz, n_rows;
+    double *b, *computed;
+    std::vector<int> row_offsets, col_offsets;
+    std::vector<double> vals;
     readFeature(featurefile, row_offsets, col_offsets, vals, in_dim, n_rows, nnz);
 
     int hidden_dim = parameters.Get<int>("hidden_dim");
     double *ref_res = new double[in_dim * hidden_dim];
     b = new double[in_dim * hidden_dim];
     app::sparseMatMul::rand_weights(in_dim, hidden_dim, b);
-    app::sparseMatMul::CPU_Reference(row_offsets, col_offsets, vals, n_rows, b,
-        in_dim, hidden_dim, ref_res);
+    app::sparseMatMul::CPU_Reference(row_offsets.data(), col_offsets.data(), vals.data(),
+        n_rows, b, in_dim, hidden_dim, ref_res);
 
     computed = new double[in_dim * hidden_dim];
-    sparseMatMul(n_rows, nnz, row_offsets, col_offsets, vals, in_dim, hidden_dim, b, computed);
+    sparseMatMul(n_rows, nnz, row_offsets.data(), col_offsets.data(), vals.data(), in_dim,
+        hidden_dim, b, computed);
     util::CompareResults(computed, ref_res, in_dim, hidden_dim);
     return retval;
   }

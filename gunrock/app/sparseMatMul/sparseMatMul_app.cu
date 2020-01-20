@@ -148,9 +148,10 @@ double sparseMatMul(const SizeT n_rows, const SizeT nnz,
   graph.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
   graph.CsrT::row_offsets.SetPointer(row_offsets, gunrock::util::HOST);
   graph.CsrT::column_indices.SetPointer(col_indices, gunrock::util::HOST);
-  graph.CsrT::edge_values.SetPointer(vals, nnz, gunrock::util::HOST);
-//  graph.FromCsr(graph.csr(), true, quiet);
+  graph.CsrT::edge_values.SetPointer(vals, gunrock::util::HOST);
+  graph.FromCsr(graph.csr(), true, quiet);
   gunrock::graphio::LoadGraph(parameters, graph);
+  graph.Display();
 
   // Run the gcn_graphsum
   double elapsed_time = sparseMatMul(parameters, graph, dim, outdim, b, c);
