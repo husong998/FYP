@@ -69,7 +69,7 @@ struct GraphsumIterationLoop
     auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
 //    auto &iteration = enactor_stats.iteration;
-    auto &in_dim = data_slice.in_dim;
+//    auto &in_dim = data_slice.in_dim;
     auto &out_dim = data_slice.out_dim;
     auto &in = data_slice.input;
     auto &out = data_slice.output;
@@ -82,8 +82,12 @@ struct GraphsumIterationLoop
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      for (int i = 0; i < out_dim; i++)
+      printf("src: %d, dest: %d, edge_id: %d, weight: %.2lf\n", src, dest, edge_id
+      , weights[edge_id]);
+      for (int i = 0; i < out_dim; i++) {
         atomicAdd(out + src * out_dim + i, weights[edge_id] * in[dest * out_dim + i]);
+        printf("%.4lf ", out[src * out_dim + i]);
+      }
       return true;
     };
 //    std::cerr << "iteration: " << iteration << "\n";
@@ -286,7 +290,7 @@ class Enactor
   cudaError_t Enact() {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(this->Run_Threads(this));
-    util::PrintMsg("GPU graphsum Done.", this->flag & Debug);
+    util::PrintMsg("GPU sparseMatMul Done.", this->flag & Debug);
     return retval;
   }
 

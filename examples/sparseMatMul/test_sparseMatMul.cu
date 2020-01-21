@@ -92,14 +92,6 @@ struct main_struct {
     bool quick = parameters.Get<bool>("quick");
     bool quiet = parameters.Get<bool>("quiet");
 
-    util::CpuTimer cpu_timer;
-    GraphT graph;
-
-    cpu_timer.Start();
-    GUARD_CU(graphio::LoadGraph(parameters, graph));
-    cpu_timer.Stop();
-    parameters.Set("load-time", cpu_timer.ElapsedMillis());
-
     std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in);
     int in_dim, nnz, n_rows;
     double *b, *computed;
@@ -115,9 +107,9 @@ struct main_struct {
         n_rows, b, in_dim, hidden_dim, ref_res);
 
     computed = new double[in_dim * hidden_dim];
-    sparseMatMul(n_rows, nnz, row_offsets.data(), col_offsets.data(), vals.data(), in_dim,
+    sparseMatMul(parameters, n_rows, nnz, row_offsets.data(), col_offsets.data(), vals.data(), in_dim,
         hidden_dim, b, computed);
-    util::CompareResults(computed, ref_res, in_dim, hidden_dim);
+    util::CompareResults(computed, ref_res, in_dim * hidden_dim);
     return retval;
   }
 };

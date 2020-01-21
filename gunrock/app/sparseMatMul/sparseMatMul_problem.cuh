@@ -127,23 +127,22 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      */
     cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
-      SizeT nodes = this->sub_graph->nodes;
 
       // Ensure data are allocated
-      GUARD_CU(output.EnsureSize_(nodes * out_dim, target));
+      GUARD_CU(output.EnsureSize_(in_dim * out_dim, target));
 
       // Initizlize local vertices
       GUARD_CU(local_vertices.ForAll(
           [] __host__ __device__(VertexT * l_vertices, const SizeT &pos) {
         l_vertices[pos] = pos;
-      }, nodes, target));
+      }, in_dim, target));
 
       // Initialize output matrix to be all 0
       GUARD_CU(output.ForEach(
           [] __host__ __device__(ValueT &x) {
             x = 0;
           },
-          nodes, target, this->stream));
+          in_dim * out_dim, target, this->stream));
 
       return retval;
     }
@@ -195,7 +194,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   cudaError_t Extract(ValueT *out,
                       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
-    SizeT nodes = this->org_graph->nodes;
 
     if (this->num_gpus == 1) {
       auto &data_slice = data_slices[0][0];
@@ -203,9 +201,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       // Set device
       if (target == util::DEVICE) {
         GUARD_CU(util::SetDevice(this->gpu_idx[0]));
-
+//        data_slice.output.Print();
         GUARD_CU(
-            data_slice.output.SetPointer(out, nodes, util::HOST));
+            data_slice.output.SetPointer(out,
+                data_slice.in_dim * data_slice.out_dim, util::HOST));
         GUARD_CU(data_slice.output.Move(util::DEVICE, util::HOST));
       }
     }
@@ -249,7 +248,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       }, in_dim * outdim, util::HOST
                ));
       data_slice.input.Move(util::HOST, util::DEVICE);
-      data_slice.input.Print();
+//      data_slice.input.Print();
     }  // end for (gpu)
 
     return retval;

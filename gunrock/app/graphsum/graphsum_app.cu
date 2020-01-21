@@ -146,9 +146,9 @@ double graphsum(const SizeT num_nodes, const SizeT num_edges,
   GraphT graph;
   // Assign pointers into gunrock graph format
   graph.CsrT::Allocate(num_nodes, num_edges, gunrock::util::HOST);
-  graph.CsrT::row_offsets.SetPointer(row_offsets, gunrock::util::HOST);
-  graph.CsrT::column_indices.SetPointer(col_indices, gunrock::util::HOST);
-  graph.FromCsr(graph.csr(), true, quiet);
+  graph.CsrT::row_offsets.SetPointer(row_offsets, num_nodes + 1, gunrock::util::HOST);
+  graph.CsrT::column_indices.SetPointer(col_indices, num_edges, gunrock::util::HOST);
+//  graph.FromCsr(graph.csr());
   gunrock::graphio::LoadGraph(parameters, graph);
 
   // Run the gcn_graphsum
