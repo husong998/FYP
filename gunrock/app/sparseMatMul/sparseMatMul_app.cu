@@ -150,11 +150,11 @@ double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT n_rows, c
   graph.CsrT::column_indices.SetPointer(col_indices, nnz, gunrock::util::HOST);
   graph.CsrT::edge_values.SetPointer(vals, nnz, gunrock::util::HOST);
 
-  graph.CsrT::row_offsets.Print();
-  graph.CsrT::column_indices.Print();
-  graph.CsrT::edge_values.Print();
+//  graph.CsrT::row_offsets.Print();
+//  graph.CsrT::column_indices.Print();
+//  graph.CsrT::edge_values.Print();
 
-  graph.Display();
+//  graph.Display();
   graph.nodes = n_rows;
   graph.edges = nnz;
   gunrock::graphio::LoadGraph(parameters, graph);
