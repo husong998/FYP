@@ -155,6 +155,8 @@ double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT n_rows, c
   graph.CsrT::edge_values.Print();
 
   graph.Display();
+  graph.nodes = n_rows;
+  graph.edges = nnz;
   gunrock::graphio::LoadGraph(parameters, graph);
 
   // Run the gcn_graphsum

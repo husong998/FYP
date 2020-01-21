@@ -58,9 +58,9 @@ namespace sparseMatMul {
 
 void CPU_Reference(int *row_offsets, int *col_offsets, double *x_vals, const int n_rows,
                    double *w, const int input_dim, const int output_dim, double *out) {
-  for (int i = 0; i < input_dim * output_dim; i++) out[i] = 0;
+  for (int i = 0; i < n_rows * output_dim; i++) out[i] = 0;
 #pragma omp parallel for schedule(static)
-  for (int i = 0; i < n_rows - 1; i++)
+  for (int i = 0; i < n_rows; i++)
     for (int jj = row_offsets[i]; jj < row_offsets[i + 1]; jj++) {
       int j = col_offsets[jj];
 #ifdef SIMD

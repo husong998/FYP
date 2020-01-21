@@ -82,11 +82,11 @@ struct GraphsumIterationLoop
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      printf("src: %d, dest: %d, edge_id: %d, weight: %.2lf\n", src, dest, edge_id
-      , weights[edge_id]);
+//      printf("src: %d, dest: %d, edge_id: %d, weight: %.2lf\n", src, dest, edge_id
+//      , weights[edge_id]);
       for (int i = 0; i < out_dim; i++) {
         atomicAdd(out + src * out_dim + i, weights[edge_id] * in[dest * out_dim + i]);
-        printf("%.4lf ", out[src * out_dim + i]);
+//        printf("%.4lf ", out[src * out_dim + i]);
       }
       return true;
     };

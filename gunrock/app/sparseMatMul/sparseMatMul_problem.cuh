@@ -129,20 +129,20 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
 
       // Ensure data are allocated
-      GUARD_CU(output.EnsureSize_(in_dim * out_dim, target));
+      GUARD_CU(output.EnsureSize_(
+          this->sub_graph->nodes * this->out_dim, target));
 
       // Initizlize local vertices
       GUARD_CU(local_vertices.ForAll(
           [] __host__ __device__(VertexT * l_vertices, const SizeT &pos) {
         l_vertices[pos] = pos;
-      }, in_dim, target));
+      }, this->sub_graph->nodes, target));
 
       // Initialize output matrix to be all 0
       GUARD_CU(output.ForEach(
           [] __host__ __device__(ValueT &x) {
             x = 0;
-          },
-          in_dim * out_dim, target, this->stream));
+          }, this->sub_graph->nodes * this->out_dim, target, this->stream));
 
       return retval;
     }

@@ -100,16 +100,23 @@ struct main_struct {
     readFeature(featurefile, row_offsets, col_offsets, vals, in_dim, n_rows, nnz);
 
     int hidden_dim = parameters.Get<int>("hidden_dim");
-    double *ref_res = new double[in_dim * hidden_dim];
+    double *ref_res = new double[n_rows * hidden_dim];
     b = new double[in_dim * hidden_dim];
     app::sparseMatMul::rand_weights(in_dim, hidden_dim, b);
     app::sparseMatMul::CPU_Reference(row_offsets.data(), col_offsets.data(), vals.data(),
         n_rows, b, in_dim, hidden_dim, ref_res);
 
-    computed = new double[in_dim * hidden_dim];
+    computed = new double[n_rows * hidden_dim];
     sparseMatMul(parameters, n_rows, nnz, row_offsets.data(), col_offsets.data(), vals.data(), in_dim,
         hidden_dim, b, computed);
-    util::CompareResults(computed, ref_res, in_dim * hidden_dim);
+//    util::CompareResults(computed, ref_res, in_dim * hidden_dim);
+    const double EPS = 1e-9;
+    for (int i = 0; i < n_rows * hidden_dim; i++) {
+      if (fabs(computed[i] - ref_res[i]) > EPS) {
+        std::cerr << "failed: [" << i << "]: " << "(" << computed[i] << ", "
+        << ref_res[i] << ")\n";
+      }
+    }
     return retval;
   }
 };
