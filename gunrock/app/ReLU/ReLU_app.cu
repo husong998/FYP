@@ -21,6 +21,8 @@
 #include <gunrock/app/app_base.cuh>
 #include <gunrock/app/test_base.cuh>
 
+#include <gunrock/app/ReLU/ReLU_test.cuh>
+
 /**
  * @brief      graphsum layer of GCN
  *
@@ -43,12 +45,12 @@ namespace ReLU {
 cudaError_t UseParameters(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
   GUARD_CU(UseParameters_app(parameters));
-  GUARD_CU(UseParameters_problem(parameters));
-  GUARD_CU(UseParameters_enactor(parameters));
+//  GUARD_CU(UseParameters_problem(parameters));
+//  GUARD_CU(UseParameters_enactor(parameters));
 
   GUARD_CU(parameters.Use<int>(
-      "hidden_dim", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
-      0, "hidden dimension of weight matrix", __FILE__, __LINE__
+      "len", util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      0, "length of input matrix", __FILE__, __LINE__
   ));
 
 //  GUARD_CU(parameters.Use<int>(
@@ -57,11 +59,6 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 //  ));
 
   return retval;
-}
-
-
-}
-}
 }
 
 /*
@@ -79,22 +76,30 @@ cudaError_t UseParameters(util::Parameters &parameters) {
  *
  * @return     double      Return accumulated elapsed times for all runs
  */
-template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
-double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT len,
-    ValueT *vals) {
-  gunrock::util::CpuTimer cpu_timer;
+  template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
+  double ReLU(gunrock::util::Parameters &parameters, const SizeT len,
+              ValueT *in, ValueT *out) {
+    gunrock::util::CpuTimer cpu_timer;
 
-  cpu_timer.Start();
-  gunrock::util::Array1D<SizeT, ValueT> a;
-  a.Init(len, gunrock::util::HOST | gunrock::util::DEVICE);
-  a.SetPointer(vals, gunrock::util::HOST);
-  a.Move(gunrock::util::HOST, gunrock::util::DEVICE);
-  a.ForEach([]__host__ __device__(ValueT &x) {
-    x = max(0, x);
-  }, len);
-  cpu_timer.Stop();
+    cpu_timer.Start();
+    gunrock::util::Array1D<SizeT, ValueT> a("input");
+    a.Init(len, gunrock::util::HOST | gunrock::util::DEVICE);
+    a.SetPointer(in, len, gunrock::util::HOST);
+    a.Move(gunrock::util::HOST, gunrock::util::DEVICE);
+//    a.Print();
+    a.ForEach([]__host__ __device__(ValueT &x) {
+      x = max(0.0, x);
+    }, len, gunrock::util::DEVICE);
+    a.SetPointer(out, len, gunrock::util::HOST);
+    a.Move(gunrock::util::DEVICE, gunrock::util::HOST);
+    cpu_timer.Stop();
 
-  return cpu_timer.ElapsedMillis();
+    return cpu_timer.ElapsedMillis();
+  }
+
+
+}
+}
 }
 
 // Leave this at the end of the file

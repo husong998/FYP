@@ -48,30 +48,16 @@ struct main_struct {
     cudaError_t retval = cudaSuccess;
     bool quick = parameters.Get<bool>("quick");
     bool quiet = parameters.Get<bool>("quiet");
+    int len = parameters.Get<int>("len");
 
-    std::ifstream featurefile(parameters.Get<std::string>("inx"), std::ifstream::in);
-    int in_dim, nnz, n_rows;
-    double *b, *computed;
-    std::vector<int> row_offsets, col_offsets;
-    std::vector<double> vals;
-    readFeature(featurefile, row_offsets, col_offsets, vals, in_dim, n_rows, nnz);
-
-    int hidden_dim = parameters.Get<int>("hidden_dim");
-    double *ref_res = new double[n_rows * hidden_dim];
-    b = new double[in_dim * hidden_dim];
-    app::sparseMatMul::rand_weights(in_dim, hidden_dim, b);
-    app::sparseMatMul::CPU_Reference(row_offsets.data(), col_offsets.data(), vals.data(),
-        n_rows, b, in_dim, hidden_dim, ref_res);
-
-    computed = new double[n_rows * hidden_dim];
-    sparseMatMul(parameters, n_rows, nnz, row_offsets.data(), col_offsets.data(), vals.data(), in_dim,
-        hidden_dim, b, computed);
-//    util::CompareResults(computed, ref_res, in_dim * hidden_dim);
+    double *in = new double[len], *out = new double[len];
+    app::ReLU::rand_array(len, in);
+    app::ReLU::ReLU(parameters, len, in, out);
     const double EPS = 1e-9;
-    for (int i = 0; i < n_rows * hidden_dim; i++) {
-      if (fabs(computed[i] - ref_res[i]) > EPS) {
-        std::cerr << "failed: [" << i << "]: " << "(" << computed[i] << ", "
-        << ref_res[i] << ")\n";
+    for (int i = 0; i < len; i++) {
+//      std::cerr << "in[" << i << "]: " << in[i] << ", " << "out[" << i << "]: " << out[i] << std::endl;
+      if (out[i] < -EPS) {
+        std::cerr << "in[" << i << "]: " << in[i] << ", " << "out[" << i << "]: " << out[i] << std::endl;
       }
     }
     return retval;
@@ -82,9 +68,10 @@ int main(int argc, char **argv) {
   cudaError_t retval = cudaSuccess;
   util::Parameters parameters("test ReLU");
   GUARD_CU(graphio::UseParameters(parameters));
-  GUARD_CU(app::sparseMatMul::UseParameters(parameters));
+  GUARD_CU(app::ReLU::UseParameters(parameters));
   GUARD_CU(app::UseParameters_test(parameters));
   GUARD_CU(parameters.Parse_CommandLine(argc, argv));
+  parameters.Set("graph-type", "by-pass");
   if (parameters.Get<bool>("help")) {
     parameters.Print_Help();
     return cudaSuccess;
