@@ -6,6 +6,7 @@ add_subdirectory(graphsum)
 add_subdirectory(gtc)
 add_subdirectory(sparseMatMul)
 add_subdirectory(ReLU)
+add_subdirectory(MatMul)
 
 # end /* Add premitives' subdirectories */
 
