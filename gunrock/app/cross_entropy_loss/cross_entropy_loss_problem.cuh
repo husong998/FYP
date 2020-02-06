@@ -59,7 +59,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   struct DataSlice : BaseDataSlice {
     util::Array1D<SizeT, ValueT> logits;
-    util::Array1D<SizeT, ValueT> max_logits;
     util::Array1D<SizeT, ValueT> grad;
     util::Array1D<SizeT, int> ground_truth;
     int count = 0, num_nodes, num_classes;
@@ -70,7 +69,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      */
     DataSlice() : BaseDataSlice() {
       logits.SetName("logits");
-      max_logits.SetName("max_logits");
       grad.SetName("grad");
       ground_truth.SetName("ground_truth");
     }
@@ -90,7 +88,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx));
 
       GUARD_CU(logits.Release(target))
-      GUARD_CU(max_logits.Release(target))
       GUARD_CU(ground_truth.Release(target))
 
       if (training) {
@@ -122,7 +119,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag))
       GUARD_CU(logits.Allocate(num_nodes * num_classes, target | util::HOST))
-      GUARD_CU(max_logits.Allocate(num_nodes, target))
       GUARD_CU(ground_truth.Allocate(num_nodes, target | util::HOST))
 
       if (training) {
@@ -141,16 +137,19 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
 
-      GUARD_CU(max_logits.ForEach(
-          []__host__ __device__(ValueT &x) {
-            x = util::PreDefinedValues<ValueT>::MinValue;
-          }
-      ))
       GUARD_CU(ground_truth.ForEach(
           []__host__ __device__(ValueT &x) {
             x = -1;
           }
       ))
+
+      if (training) {
+        GUARD_CU(grad.ForEach(
+            []__host__ __device__(ValueT &x) {
+              x = 0;
+            }
+        ))
+      }
       return retval;
     }
   };  // DataSlice

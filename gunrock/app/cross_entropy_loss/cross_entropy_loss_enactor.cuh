@@ -64,40 +64,61 @@ struct GraphsumIterationLoop
         this->enactor
             ->enactor_slices[this->gpu_num * this->enactor->num_gpus + peer_];
     auto &enactor_stats = enactor_slice.enactor_stats;
-    auto &graph = data_slice.sub_graph[0];
-    auto &frontier = enactor_slice.frontier;
-    auto &oprtr_parameters = enactor_slice.oprtr_parameters;
+//    auto &graph = data_slice.sub_graph[0];
+//    auto &frontier = enactor_slice.frontier;
+//    auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
-    auto &iteration = enactor_stats.iteration;
-    auto &dim = data_slice.dim;
-    auto &in = data_slice.input;
-    auto &out = data_slice.output;
-    auto &local_vertices = data_slice.local_vertices;
+//    auto &iteration = enactor_stats.iteration;
+    auto &ground_truth = data_slice.ground_truth;
+    auto &loss = data_slice.loss;
+    auto &logits = data_slice.logits;
+    auto &count = data_slice.count;
+    auto &n_nodes = data_slice.num_nodes, &num_clases = data_slice.num_classes;
+    auto &grad = data_slice.grad;
+    auto &training = data_slice.training;
 
-    // The advance operation
-    auto advance_lambda =
-        [in, out, graph, dim] __host__ __device__(
-            const VertexT &src, VertexT &dest, const SizeT &edge_id,
-            const VertexT &input_item, const SizeT &input_pos,
-            SizeT &output_pos) -> bool {
-      ValueT coef = (long long)graph.GetNeighborListLength(src) *
-          graph.GetNeighborListLength(dest);
-      coef = 1.0 / sqrt(coef);
-      for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
-      return true;
-    };
-//    std::cerr << "iteration: " << iteration << "\n";
-    frontier.queue_length = local_vertices.GetSize();
-    frontier.queue_reset = true;
-    oprtr_parameters.advance_mode = "ALL_EDGES";
-    auto null_ptr = &local_vertices;
-    null_ptr = NULL;
-    GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
-        graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_lambda));
+    GUARD_CU(ground_truth.ForAll(logits, grad
+        [count, num_clases, loss, training]__host__ __device__(int *truth,
+            ValueT *logits, ValueT *grad, const SizeT &pos) {
+          if (truth[pos] >= 0) {
+            // count the number of labeled nodes
+            atomicAdd(&count, 1);
 
-    enactor_stats.edges_queued[0] += graph.edges;
+            // get max_logit for current node, max_logits will be used for
+            // normalization trick: https://timvieira.github.io/blog/post/2014/02/11/exp-normalize-trick/?nsukey=rWH8DtvqNfw72DAmoQPHjdYV2Yywr0HdCvKkgA4vR0X4xQOt5X2VyNstwytbKOI8CP7Mhsa84C0WqsVrgIPNPjOBqayTXF8ufC76oms71y2l9aq2ojHp4NeSPqnweprhc7IQ1rBBsPpdYPEBe2hEO33xb0XMT5J%2F2TzpcyFIw8GU5dPDtoqDzW%2BGOcWLHbvPxBBrYioidJYAS3TMuinEXQ%3D%3D
+            ValueT max_logit = util::PreDefinedValues<ValueT>::MinValue;
+            for (int i = 0; i < num_clases; i++) {
+              max_logit = max(max_logit, logits[pos * num_clases + i]);
+            }
+
+            // get sum_exp for calculating sigmoid function
+            ValueT sum_exp = 0, *logit = logits + pos * num_clases;
+            for (int i = 0; i < num_clases; i++) {
+              logit[i] -= max_logit;
+              sum_exp += exp(logit[i]);
+            }
+
+            loss += log(sum_exp) - logit[ground_truth[pos]];
+
+            if (training) {
+              for (int i = 0; i < num_clases; i++) {
+                ValueT prob = exp(logit[i]) / sum_exp;
+                grad[pos * num_clases + i] = prob;
+              }
+            }
+            grad[pos * num_clases + ground_truth[pos]] -= 1;
+          }
+        }, n_nodes, util::DEVICE
+    ))
+
+    loss /= count;
+    if (training) {
+      GUARD_CU(grad.ForEach(
+          [count]__host__ __device__(ValueT &x) {
+            x /= count;
+          }
+      ))
+    }
     return retval;
   }
 
@@ -223,10 +244,10 @@ class Enactor
     GUARD_CU(BaseEnactor::Init(problem, Enactor_None, 2, NULL, target, false));
     for (int gpu = 0; gpu < this->num_gpus; gpu++) {
       GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-      auto &enactor_slice = this->enactor_slices[gpu * this->num_gpus + 0];
-      auto &graph = problem.sub_graphs[gpu];
-      GUARD_CU(enactor_slice.frontier.Allocate(graph.nodes, graph.edges,
-                                               this->queue_factors));
+//      auto &enactor_slice = this->enactor_slices[gpu * this->num_gpus + 0];
+//      auto &graph = problem.sub_graphs[gpu];
+//      GUARD_CU(enactor_slice.frontier.Allocate(graph.nodes, graph.edges,
+//                                               this->queue_factors));
     }
 
     iterations = new IterationT[this->num_gpus];
@@ -251,15 +272,15 @@ class Enactor
     GUARD_CU(BaseEnactor::Reset(target));
     for (int gpu = 0; gpu < this->num_gpus; gpu++) {
       for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
-        auto &frontier =
-            this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
-        // TODO: check whether the frontier is initialized properly
-        frontier.queue_length =
-            (peer_ != 0)
-            ? 0
-            : this->problem->data_slices[gpu]->local_vertices.GetSize();
-        frontier.queue_index = 0;  // Work queue index
-        frontier.queue_reset = true;
+//        auto &frontier =
+//            this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
+//        // TODO: check whether the frontier is initialized properly
+//        frontier.queue_length =
+//            (peer_ != 0)
+//            ? 0
+//            : this->problem->data_slices[gpu]->local_vertices.GetSize();
+//        frontier.queue_index = 0;  // Work queue index
+//        frontier.queue_reset = true;
         this->enactor_slices[gpu * this->num_gpus + peer_]
             .enactor_stats.iteration = 0;
       }
