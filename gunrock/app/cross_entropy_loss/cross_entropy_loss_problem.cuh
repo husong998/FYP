@@ -28,10 +28,6 @@ cudaError_t UseParameters_problem(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
 
   GUARD_CU(gunrock::app::UseParameters_problem(parameters));
-  GUARD_CU(parameters.Use<bool>(
-      "mark-pred",
-      util::OPTIONAL_ARGUMENT | util::MULTI_VALUE | util::OPTIONAL_PARAMETER,
-      false, "Whether to mark predecessor info.", __FILE__, __LINE__));
 
   return retval;
 }
@@ -61,21 +57,22 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   // Helper structures
 
-  /**
-   * @brief Data structure containing graphsum-specific data on indivual GPU.
-   */
   struct DataSlice : BaseDataSlice {
-    util::Array1D<SizeT, ValueT> input, output;
-    util::Array1D<SizeT, VertexT> local_vertices;
-    int dim;
+    util::Array1D<SizeT, ValueT> logits;
+    util::Array1D<SizeT, ValueT> max_logits;
+    util::Array1D<SizeT, ValueT> grad;
+    util::Array1D<SizeT, int> ground_truth;
+    int count = 0, num_nodes, num_classes;
+    bool training;
 
     /*
      * @brief Default constructor
      */
     DataSlice() : BaseDataSlice() {
-      input.SetName("input");
-      output.SetName("output");
-      local_vertices.SetName("local_vertices");
+      logits.SetName("logits");
+      max_logits.SetName("max_logits");
+      grad.SetName("grad");
+      ground_truth.SetName("ground_truth");
     }
 
     /*
@@ -92,9 +89,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx));
 
-      GUARD_CU(input.Release(target));
-      GUARD_CU(output.Release(target));
-      GUARD_CU(BaseDataSlice ::Release(target));
+      GUARD_CU(logits.Release(target))
+      GUARD_CU(max_logits.Release(target))
+      GUARD_CU(ground_truth.Release(target))
+
+      if (training) {
+        GUARD_CU(grad.Release(target))
+      }
+      GUARD_CU(BaseDataSlice ::Release(target))
       return retval;
     }
 
@@ -107,17 +109,25 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] flag        Problem flag containling options
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Init(GraphT &sub_graph, const int dim,
+    cudaError_t Init(GraphT &sub_graph, const int num_nodes, const int num_classes,
+                     const bool training = 1,
                      int num_gpus = 1, int gpu_idx = 0,
                      util::Location target = util::DEVICE,
                      ProblemFlag flag = Problem_None) {
-      this->dim = dim;
       cudaError_t retval = cudaSuccess;
 
-      GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
-      GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
-      GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
-      GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
+      this->num_nodes = num_nodes;
+      this->num_classes = num_classes;
+      this->training = training;
+
+      GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag))
+      GUARD_CU(logits.Allocate(num_nodes * num_classes, target | util::HOST))
+      GUARD_CU(max_logits.Allocate(num_nodes, target))
+      GUARD_CU(ground_truth.Allocate(num_nodes, target | util::HOST))
+
+      if (training) {
+        GUARD_CU(grad.Allocate(num_nodes * num_classes, target))
+      }
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;
@@ -130,24 +140,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      */
     cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
-      SizeT nodes = this->sub_graph->nodes;
 
-      // Ensure data are allocated
-      GUARD_CU(output.EnsureSize_(nodes * dim, target));
-
-      // Initizlize local vertices
-      GUARD_CU(local_vertices.ForAll(
-          [] __host__ __device__(VertexT * l_vertices, const SizeT &pos) {
-        l_vertices[pos] = pos;
-      }, nodes, target));
-
-      // Initialize output matrix to be all 0
-      GUARD_CU(output.ForEach(
-          [] __host__ __device__(ValueT &x) {
-            x = 0;
-          },
-          nodes, target, this->stream));
-
+      GUARD_CU(max_logits.ForEach(
+          []__host__ __device__(ValueT &x) {
+            x = util::PreDefinedValues<ValueT>::MinValue;
+          }
+      ))
+      GUARD_CU(ground_truth.ForEach(
+          []__host__ __device__(ValueT &x) {
+            x = -1;
+          }
+      ))
       return retval;
     }
   };  // DataSlice
@@ -195,21 +198,22 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    */
 
 
-  cudaError_t Extract(ValueT *out,
+  cudaError_t Extract(ValueT *h_grad, ValueT *loss,
                       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
-    SizeT nodes = this->org_graph->nodes;
 
     if (this->num_gpus == 1) {
       auto &data_slice = data_slices[0][0];
 
       // Set device
       if (target == util::DEVICE) {
-        GUARD_CU(util::SetDevice(this->gpu_idx[0]));
+        GUARD_CU(util::SetDevice(this->gpu_idx[0]))
 
         GUARD_CU(
-            data_slice.output.SetPointer(out, nodes, util::HOST));
-        GUARD_CU(data_slice.output.Move(util::DEVICE, util::HOST));
+            data_slice.grad.SetPointer(h_grad,
+                data_slice.num_nodes * data_slice.num_classes, util::HOST))
+        GUARD_CU(data_slice.grad.Move(util::DEVICE, util::HOST))
+        GUARD_CU(cudaMemcpy(loss, &data_slices.loss, cudaMemcpyHostToDevice))
       }
     }
 
@@ -226,8 +230,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, const ValueT *in,
-      util::Location target = util::DEVICE) {
+  cudaError_t Init(GraphT &graph, const int num_nodes, const int num_classes,
+      ValueT *logits, int *truth, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -239,20 +243,16 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
 
       auto &data_slice = data_slices[gpu][0];
-      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, this->num_gpus,
-                               this->gpu_idx[gpu], target, this->flag));
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], num_nodes
+          num_classes, this->num_gpus, this->gpu_idx[gpu], target, this->flag));
 
-      // Initialize input matrix
-      auto nodes = this->sub_graphs[gpu].nodes;
-      GUARD_CU(data_slice.input.EnsureSize_(nodes * dim));
-      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
-      GUARD_CU(data_slice.input.ForAll(
-               [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
-        in_[pos] = in[pos];
-      }, nodes * dim, util::HOST
-               ));
+      GUARD_CU(data_slice.logits.SetPointer(logits))
+      GUARD_CU(data_slices.logits.Move(util::HOST, util::DEVICE))
+
+      GUARD_CU(data_slice.ground_truth.SetPointer(truth))
+      GUARD_CU(data_slice.ground_truth.Move(util::HOST, util::DEVICE))
+
       data_slice.input.Move(util::HOST, util::DEVICE);
-      data_slice.input.Print();
     }  // end for (gpu)
 
     return retval;
