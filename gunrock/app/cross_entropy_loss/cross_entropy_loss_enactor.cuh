@@ -308,7 +308,7 @@ class Enactor
   cudaError_t Enact() {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(this->Run_Threads(this));
-    util::PrintMsg("GPU graphsum Done.", this->flag & Debug);
+    util::PrintMsg("GPU cross entropy loss calculation Done.", this->flag & Debug);
     return retval;
   }
 

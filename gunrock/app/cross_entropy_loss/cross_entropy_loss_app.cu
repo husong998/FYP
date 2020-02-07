@@ -23,6 +23,7 @@
 
 // single-source shortest path includes
 #include <gunrock/app/cross_entropy_loss/cross_entropy_loss_enactor.cuh>
+#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_test.cuh>
 
 /**
  * @brief      graphsum layer of GCN
