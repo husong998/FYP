@@ -1,7 +1,7 @@
 # ------------------------------------------------------------------------
 #  Gunrock: Sub-Project PageRank
 # ------------------------------------------------------------------------
-project(graphsum)
+project(cross_entropy_loss)
 message("-- Project Added: ${PROJECT_NAME}")
 include(${CMAKE_SOURCE_DIR}/cmake/SetSubProject.cmake)
 

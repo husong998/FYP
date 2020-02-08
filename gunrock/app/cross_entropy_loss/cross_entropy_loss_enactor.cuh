@@ -17,7 +17,7 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/graphsum/graphsum_problem.cuh>
+#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 namespace gunrock {
@@ -72,33 +72,36 @@ struct GraphsumIterationLoop
     auto &ground_truth = data_slice.ground_truth;
     auto &loss = data_slice.loss;
     auto &logits = data_slice.logits;
-    auto &count = data_slice.count;
     auto &n_nodes = data_slice.num_nodes, &num_clases = data_slice.num_classes;
     auto &grad = data_slice.grad;
     auto &training = data_slice.training;
 
-    GUARD_CU(ground_truth.ForAll(logits, grad
-        [count, num_clases, loss, training]__host__ __device__(int *truth,
-            ValueT *logits, ValueT *grad, const SizeT &pos) {
+    util::Array1D<SizeT, int> count("count");
+    GUARD_CU(count.Init(1, util::DEVICE))
+    GUARD_CU(count.ForEach([]__host__ __device__(int &x) { x = 0; }))
+
+    GUARD_CU(ground_truth.ForAll(logits, grad,
+        [num_clases, loss, training]__host__ __device__(int *truth,
+            ValueT *d_logits, ValueT *grad, const SizeT &pos) {
           if (truth[pos] >= 0) {
             // count the number of labeled nodes
-            atomicAdd(&count, 1);
+//            atomicAdd(count + 0, 1);
 
             // get max_logit for current node, max_logits will be used for
             // normalization trick: https://timvieira.github.io/blog/post/2014/02/11/exp-normalize-trick/?nsukey=rWH8DtvqNfw72DAmoQPHjdYV2Yywr0HdCvKkgA4vR0X4xQOt5X2VyNstwytbKOI8CP7Mhsa84C0WqsVrgIPNPjOBqayTXF8ufC76oms71y2l9aq2ojHp4NeSPqnweprhc7IQ1rBBsPpdYPEBe2hEO33xb0XMT5J%2F2TzpcyFIw8GU5dPDtoqDzW%2BGOcWLHbvPxBBrYioidJYAS3TMuinEXQ%3D%3D
             ValueT max_logit = util::PreDefinedValues<ValueT>::MinValue;
             for (int i = 0; i < num_clases; i++) {
-              max_logit = max(max_logit, logits[pos * num_clases + i]);
+              max_logit = max(max_logit, d_logits[pos * num_clases + i]);
             }
 
             // get sum_exp for calculating sigmoid function
-            ValueT sum_exp = 0, *logit = logits + pos * num_clases;
+            ValueT sum_exp = 0, *logit = d_logits + pos * num_clases;
             for (int i = 0; i < num_clases; i++) {
               logit[i] -= max_logit;
               sum_exp += exp(logit[i]);
             }
 
-            loss += log(sum_exp) - logit[ground_truth[pos]];
+            loss += log(sum_exp) - logit[truth[pos]];
 
             if (training) {
               for (int i = 0; i < num_clases; i++) {
@@ -106,16 +109,16 @@ struct GraphsumIterationLoop
                 grad[pos * num_clases + i] = prob;
               }
             }
-            grad[pos * num_clases + ground_truth[pos]] -= 1;
+            grad[pos * num_clases + truth[pos]] -= 1;
           }
         }, n_nodes, util::DEVICE
     ))
 
-    loss /= count;
+    loss /= count[0];
     if (training) {
       GUARD_CU(grad.ForEach(
           [count]__host__ __device__(ValueT &x) {
-            x /= count;
+            x /= count[0];
           }
       ))
     }

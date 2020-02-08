@@ -41,7 +41,7 @@ struct main_struct {
             typename ValueT>   // Use int as the value type
   cudaError_t
   operator()(util::Parameters &parameters, VertexT v, SizeT s, ValueT val) {
-    typedef typename app::TestGraph<VertexT, SizeT, ValueT>
+    typedef typename app::TestGraph<VertexT, SizeT, ValueT, graph::HAS_CSR>
         GraphT;
     // typedef typename GraphT::CooT CooT;
 
@@ -50,11 +50,19 @@ struct main_struct {
     int num_classes = parameters.Get<int>("num_classes");
     int num_nodes = parameters.Get<int>("num_nodes");
 
+    // randomizing inputs
     int *ground_truth = new int[num_nodes];
-    gunrock::app::cross_entropy_loss::rand_truth(num_classes, num_nodes, ground_truth);
-
+    app::cross_entropy_loss::rand_truth(num_classes, num_nodes, ground_truth);
     double *logits = new double[num_classes * num_nodes];
-    gunrock::app::cross_entropy_loss::rand_logits(num_classes * num_nodes, logits);
+    app::cross_entropy_loss::rand_logits(num_classes * num_nodes, logits);
+
+    // run CPU_reference as benchmark
+    double *ref_grad = new double[num_classes * num_nodes], ref_loss;
+    app::cross_entropy_loss::CPU_Reference(num_nodes, num_classes, logits, ground_truth, ref_grad, ref_loss);
+
+    double *cal_grad = new double[num_classes * num_nodes], cal_loss;
+    GraphT g; // dummy graph to be passed to gunrock problem struct
+    cross_entropy_loss(parameters, g, num_nodes, num_classes, logits, ground_truth, cal_grad, cal_loss);
     return retval;
   }
 };
@@ -63,7 +71,7 @@ int main(int argc, char **argv) {
   cudaError_t retval = cudaSuccess;
   util::Parameters parameters("test graphsum");
   GUARD_CU(graphio::UseParameters(parameters));
-  GUARD_CU(app::graphsum::UseParameters(parameters));
+  GUARD_CU(app::cross_entropy_loss::UseParameters(parameters));
   GUARD_CU(app::UseParameters_test(parameters));
   GUARD_CU(parameters.Parse_CommandLine(argc, argv));
   GUARD_CU(parameters.Set("graph-type", "bypass"))
