@@ -53,29 +53,29 @@ void CPU_Reference(const int num_nodes, const int num_classes, const double *tmp
   for (int i = 0; i < num_nodes * num_classes; i++) {
     grad[i] = 0;
   }
-#pragma omp parallel for schedule(static) reduction(+:total_loss) reduction(+:count)
+//#pragma omp parallel for schedule(static) reduction(+:total_loss) reduction(+:count)
   for (int i = 0; i < num_nodes; i++) {
     if (ground_truth[i] < 0) continue;
     count++;
     double *logit = &logits[i * num_classes];
     double max_logit = -1e30, sum_exp = 0;
-#ifdef SIMD
-#pragma omp simd reduction(max:max_logit)
-#endif
+//#ifdef SIMD
+//#pragma omp simd reduction(max:max_logit)
+//#endif
     for (int j = 0; j < num_classes; j++)
       max_logit = fmax(max_logit, logit[j]);
-#ifdef SIMD
-#pragma omp simd reduction(+:sum_exp)
-#endif
+//#ifdef SIMD
+//#pragma omp simd reduction(+:sum_exp)
+//#endif
     for (int j = 0; j < num_classes; j++) {
       logit[j] -= max_logit;
       sum_exp += expf(logit[j]);
     }
     total_loss += logf(sum_exp) - logit[ground_truth[i]];
 
-#ifdef SIMD
-#pragma omp simd
-#endif
+//#ifdef SIMD
+//#pragma omp simd
+//#endif
     for (int j = 0; j < num_classes; j++) {
       double prob = expf(logit[j]) / sum_exp;
       grad[i * num_classes + j] = prob;
@@ -83,11 +83,11 @@ void CPU_Reference(const int num_nodes, const int num_classes, const double *tmp
     grad[i * num_classes + ground_truth[i]] -= 1.0;
   }
   total_loss /= count;
-#ifdef SIMD
-#pragma omp parallel for simd schedule(static)
-#else
-#pragma omp parallel for schedule(static)
-#endif
+//#ifdef SIMD
+//#pragma omp parallel for simd schedule(static)
+//#else
+//#pragma omp parallel for schedule(static)
+//#endif
   for (int i = 0; i < num_classes * num_nodes; i++)
     grad[i] /= count;
 }

@@ -81,11 +81,11 @@ struct GraphsumIterationLoop
     GUARD_CU(count.ForEach([]__host__ __device__(int &x) { x = 0; }))
 
     GUARD_CU(ground_truth.ForAll(logits, grad,
-        [num_clases, loss, training]__host__ __device__(int *truth,
+        [num_clases, loss, training, count]__host__ __device__(int *truth,
             ValueT *d_logits, ValueT *grad, const SizeT &pos) {
           if (truth[pos] >= 0) {
             // count the number of labeled nodes
-//            atomicAdd(count + 0, 1);
+            atomicAdd(count + 0, 1);
 
             // get max_logit for current node, max_logits will be used for
             // normalization trick: https://timvieira.github.io/blog/post/2014/02/11/exp-normalize-trick/?nsukey=rWH8DtvqNfw72DAmoQPHjdYV2Yywr0HdCvKkgA4vR0X4xQOt5X2VyNstwytbKOI8CP7Mhsa84C0WqsVrgIPNPjOBqayTXF8ufC76oms71y2l9aq2ojHp4NeSPqnweprhc7IQ1rBBsPpdYPEBe2hEO33xb0XMT5J%2F2TzpcyFIw8GU5dPDtoqDzW%2BGOcWLHbvPxBBrYioidJYAS3TMuinEXQ%3D%3D
@@ -101,7 +101,7 @@ struct GraphsumIterationLoop
               sum_exp += exp(logit[i]);
             }
 
-            loss += log(sum_exp) - logit[truth[pos]];
+            loss[0] += log(sum_exp) - logit[truth[pos]];
 
             if (training) {
               for (int i = 0; i < num_clases; i++) {
@@ -114,7 +114,7 @@ struct GraphsumIterationLoop
         }, n_nodes, util::DEVICE
     ))
 
-    loss /= count[0];
+    loss[0] /= count[0];
     if (training) {
       GUARD_CU(grad.ForEach(
           [count]__host__ __device__(ValueT &x) {

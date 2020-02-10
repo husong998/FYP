@@ -60,9 +60,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   struct DataSlice : BaseDataSlice {
     util::Array1D<SizeT, ValueT> logits;
     util::Array1D<SizeT, ValueT> grad;
+    util::Array1D<SizeT, ValueT> loss;
     util::Array1D<SizeT, int> ground_truth;
     int num_nodes, num_classes;
-    ValueT loss = 0;
     bool training;
 
     /*
@@ -121,6 +121,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag))
       GUARD_CU(logits.Allocate(num_nodes * num_classes, target | util::HOST))
       GUARD_CU(ground_truth.Allocate(num_nodes, target | util::HOST))
+      GUARD_CU(loss.Allocate(1, target))
 
       if (training) {
         GUARD_CU(grad.Allocate(num_nodes * num_classes, target))
@@ -139,8 +140,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
 
       GUARD_CU(ground_truth.ForEach(
-          []__host__ __device__(ValueT &x) {
+          []__host__ __device__(int &x) {
             x = -1;
+          }
+      ))
+
+      GUARD_CU(loss.ForEach(
+          []__host__ __device__(ValueT &x) {
+            x = 0;
           }
       ))
 
@@ -213,7 +220,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
             data_slice.grad.SetPointer(grad,
                 data_slice.num_nodes * data_slice.num_classes, util::HOST))
         GUARD_CU(data_slice.grad.Move(util::DEVICE, util::HOST))
-        GUARD_CU(cudaMemcpy(loss, &data_slices.loss, cudaMemcpyHostToDevice))
+
+        GUARD_CU(data_slice.loss.SetPointer(loss, 1, util::HOST))
+        GUARD_CU(data_slice.loss.Move(util::DEVICE, util::HOST))
       }
     }
 
