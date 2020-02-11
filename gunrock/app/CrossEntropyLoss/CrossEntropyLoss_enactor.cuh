@@ -17,12 +17,12 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_problem.cuh>
+#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 namespace gunrock {
 namespace app {
-namespace cross_entropy_loss {
+namespace CrossEntropyLoss {
 
 /**
  * @brief Speciflying parameters for SSSP Enactor
@@ -40,7 +40,7 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  * @tparam EnactorT Type of enactor
  */
 template <typename EnactorT>
-struct GraphsumIterationLoop
+struct CorssEntropyLoop
     : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
@@ -50,7 +50,7 @@ struct GraphsumIterationLoop
   typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
-  GraphsumIterationLoop() : BaseIterationLoop() {}
+  CorssEntropyLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -80,8 +80,10 @@ struct GraphsumIterationLoop
     GUARD_CU(count.Init(1, util::DEVICE))
     GUARD_CU(count.ForEach([]__host__ __device__(int &x) { x = 0; }))
 
+    util::Array1D<SizeT, ValueT> max_logits("max_logits");
+    GUARD_CU(max_logits.Init(data_slice.num_nodes, util::DEVICE))
     GUARD_CU(ground_truth.ForAll(logits, grad,
-        [num_clases, loss, training, count]__host__ __device__(int *truth,
+        [max_logits, num_clases, loss, training, count]__host__ __device__(int *truth,
             ValueT *d_logits, ValueT *grad, const SizeT &pos) {
           if (truth[pos] >= 0) {
             // count the number of labeled nodes
@@ -89,19 +91,20 @@ struct GraphsumIterationLoop
 
             // get max_logit for current node, max_logits will be used for
             // normalization trick: https://timvieira.github.io/blog/post/2014/02/11/exp-normalize-trick/?nsukey=rWH8DtvqNfw72DAmoQPHjdYV2Yywr0HdCvKkgA4vR0X4xQOt5X2VyNstwytbKOI8CP7Mhsa84C0WqsVrgIPNPjOBqayTXF8ufC76oms71y2l9aq2ojHp4NeSPqnweprhc7IQ1rBBsPpdYPEBe2hEO33xb0XMT5J%2F2TzpcyFIw8GU5dPDtoqDzW%2BGOcWLHbvPxBBrYioidJYAS3TMuinEXQ%3D%3D
+            ValueT sum_exp = 0, *logit = d_logits + pos * num_clases;
             ValueT max_logit = util::PreDefinedValues<ValueT>::MinValue;
             for (int i = 0; i < num_clases; i++) {
-              max_logit = max(max_logit, d_logits[pos * num_clases + i]);
+              max_logit = max(max_logit, logit[i]);
             }
+            max_logits[pos] = max_logit;
 
             // get sum_exp for calculating sigmoid function
-            ValueT sum_exp = 0, *logit = d_logits + pos * num_clases;
             for (int i = 0; i < num_clases; i++) {
               logit[i] -= max_logit;
               sum_exp += exp(logit[i]);
             }
 
-            loss[0] += log(sum_exp) - logit[truth[pos]];
+            atomicAdd(loss + 0, log(sum_exp) - logit[truth[pos]]);
 
             if (training) {
               for (int i = 0; i < num_clases; i++) {
@@ -113,15 +116,25 @@ struct GraphsumIterationLoop
           }
         }, n_nodes, util::DEVICE
     ))
+//    max_logits.Print();
 
-    loss[0] /= count[0];
+//    loss.Print();
+//    count.Print();
+    GUARD_CU(loss.ForEach(
+        count,
+        []__host__ __device__(ValueT &l, int &c) {
+          l /= c;
+        }, 1, util::DEVICE
+    ))
     if (training) {
       GUARD_CU(grad.ForEach(
           [count]__host__ __device__(ValueT &x) {
             x /= count[0];
-          }
+          }, grad.GetSize(), util::DEVICE
       ))
     }
+
+//    grad.Print();
     return retval;
   }
 
@@ -148,12 +161,13 @@ struct GraphsumIterationLoop
 //      }
 //    if (all_zero) return true;
 
-    for (int gpu = 0; gpu < num_gpus; gpu++)
-      if (enactor_slices[gpu * num_gpus].enactor_stats.iteration < 1) {
-        // printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats[gpu
-        // * num_gpus].iteration);
+    for (int gpu = 0; gpu < num_gpus; gpu++) {
+      auto &enactor_stats = enactor_slices[gpu * num_gpus].enactor_stats;
+      if (enactor_stats.iteration < 1) {
+//         printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats.iteration);
         return false;
       }
+    }
     return true;
   }
 
@@ -196,7 +210,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef GraphsumIterationLoop<EnactorT> IterationT;
+  typedef CorssEntropyLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;
@@ -211,6 +225,8 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
+    this->max_num_vertex_associates = 0;
+    this->max_num_value__associates = 1;
   }
 
   /**
@@ -275,15 +291,11 @@ class Enactor
     GUARD_CU(BaseEnactor::Reset(target));
     for (int gpu = 0; gpu < this->num_gpus; gpu++) {
       for (int peer_ = 0; peer_ < this->num_gpus; peer_++) {
-//        auto &frontier =
-//            this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
-//        // TODO: check whether the frontier is initialized properly
-//        frontier.queue_length =
-//            (peer_ != 0)
-//            ? 0
-//            : this->problem->data_slices[gpu]->local_vertices.GetSize();
-//        frontier.queue_index = 0;  // Work queue index
-//        frontier.queue_reset = true;
+        auto &frontier =
+            this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
+        frontier.queue_length = (peer_ != 0) ? 0 : 1;
+        frontier.queue_index = 0;  // Work queue index
+        frontier.queue_reset = true;
         this->enactor_slices[gpu * this->num_gpus + peer_]
             .enactor_stats.iteration = 0;
       }

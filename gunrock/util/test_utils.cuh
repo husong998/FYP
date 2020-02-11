@@ -432,6 +432,45 @@ SizeT CompareResults(float *computed, float *reference, SizeT len,
   return num_errors;
 }
 
+template <typename SizeT>
+SizeT CompareResults(double *computed, double *reference, SizeT len,
+                     bool verbose = true, bool quiet = false) {
+  double THRESHOLD = 1e-6;
+  SizeT num_errors = 0;
+  for (SizeT i = 0; i < len; i++) {
+    // Use relative error rate here.
+    if (fabs(computed[i] - 0.0) < 0.01) {
+      if (fabs(computed[i] - reference[i]) <= THRESHOLD) continue;
+    } else {
+      if (fabs((computed[i] - reference[i]) / reference[i]) <= THRESHOLD)
+        continue;
+    }
+
+    num_errors += 1;
+    if (quiet || num_errors > 1) continue;
+
+    util::PrintMsg("FAIL: [" + std::to_string(i) +
+                   "]: " + std::to_string(computed[i]) +
+                   " != " + std::to_string(reference[i]));
+    if (!verbose) continue;
+
+    util::PrintMsg("result[...", true, false);
+    for (SizeT j = (i >= 5) ? i - 5 : 0; (j < i + 5) && (j < len); j++) {
+      util::PrintMsg(std::to_string(computed[j]) + ", ", true, false);
+    }
+    util::PrintMsg("...]");
+    util::PrintMsg("reference[...", true, false);
+    for (size_t j = (i >= 5) ? i - 5 : 0; (j < i + 5) && (j < len); j++) {
+      util::PrintMsg(std::to_string(reference[j]) + ", ", true, false);
+    }
+    util::PrintMsg("...]");
+  }
+  if (num_errors == 0 && !quiet) {
+    util::PrintMsg("PASS");
+  }
+  return num_errors;
+}
+
 /** @} */
 
 }  // namespace util

@@ -22,8 +22,8 @@
 #include <gunrock/app/test_base.cuh>
 
 // single-source shortest path includes
-#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_enactor.cuh>
-#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_test.cuh>
+#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_enactor.cuh>
+#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_test.cuh>
 
 /**
  * @brief      graphsum layer of GCN
@@ -42,7 +42,7 @@
 
 namespace gunrock {
 namespace app {
-namespace cross_entropy_loss {
+namespace CrossEntropyLoss {
 
 cudaError_t UseParameters(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
@@ -50,12 +50,17 @@ cudaError_t UseParameters(util::Parameters &parameters) {
   GUARD_CU(UseParameters_problem(parameters));
   GUARD_CU(UseParameters_enactor(parameters));
 
-//  GUARD_CU(parameters.Use<std::string>(
-//      "in",
-//      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-//      "invalid",
-//      "input file name to feature matrix", __FILE__, __LINE__
-//      ));
+  GUARD_CU(parameters.Use<int>(
+      "num_classes",
+      util::OPTIONAL_PARAMETER | util::SINGLE_VALUE | util::OPTIONAL_ARGUMENT,
+      10, "number of classes per node", __FILE__, __LINE__
+  ));
+
+  GUARD_CU(parameters.Use<int>(
+      "num_nodes",
+      util::OPTIONAL_PARAMETER | util::SINGLE_VALUE | util::OPTIONAL_ARGUMENT,
+      1000, "number of nodes", __FILE__, __LINE__
+  ));
 
   return retval;
 }
@@ -65,11 +70,11 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double cross_entropy_loss(gunrock::util::Parameters &parameters, GraphT &graph, const int num_nodes,
-    const int num_classes, ValueT *logits, int *ground_truth, ValueT *grad, ValueT &loss) {
+double CrossEntropyLoss(gunrock::util::Parameters &parameters, GraphT &graph, const int num_nodes,
+                        const int num_classes, ValueT *logits, int *ground_truth, ValueT *grad, ValueT &loss) {
   typedef typename GraphT::VertexT VertexT;
-  typedef gunrock::app::cross_entropy_loss::Problem<GraphT> ProblemT;
-  typedef gunrock::app::cross_entropy_loss::Enactor<ProblemT> EnactorT;
+  typedef gunrock::app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+  typedef gunrock::app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
   gunrock::util::CpuTimer cpu_timer;
   gunrock::util::Location target = gunrock::util::DEVICE;
   double total_time = 0;

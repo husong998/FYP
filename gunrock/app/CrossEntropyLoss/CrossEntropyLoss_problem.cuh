@@ -18,7 +18,7 @@
 
 namespace gunrock {
 namespace app {
-namespace cross_entropy_loss {
+namespace CrossEntropyLoss {
 /**
  * @brief Speciflying parameters for graphsum Problem
  * @param  parameters  The util::Parameter<...> structure holding all parameter
@@ -72,6 +72,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       logits.SetName("logits");
       grad.SetName("grad");
       ground_truth.SetName("ground_truth");
+      loss.SetName("loss");
     }
 
     /*
@@ -121,13 +122,15 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag))
       GUARD_CU(logits.Allocate(num_nodes * num_classes, target | util::HOST))
       GUARD_CU(ground_truth.Allocate(num_nodes, target | util::HOST))
-      GUARD_CU(loss.Allocate(1, target))
+      GUARD_CU(loss.Allocate(1, target | util::HOST))
 
       if (training) {
-        GUARD_CU(grad.Allocate(num_nodes * num_classes, target))
+        util::PrintMsg("target: " + util::Location_to_string(target));
+        GUARD_CU(grad.Init(num_nodes * num_classes, target))
+//        util::PrintMsg("Allocated on: " + util::Location_to_string(grad.GetAllocated()));
       }
 
-      GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
+//      GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;
     }  // Init
 
@@ -139,11 +142,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
 
-      GUARD_CU(ground_truth.ForEach(
-          []__host__ __device__(int &x) {
-            x = -1;
-          }
-      ))
+//      GUARD_CU(ground_truth.ForEach(
+//          []__host__ __device__(int &x) {
+//            x = -1;
+//          }
+//      ))
 
       GUARD_CU(loss.ForEach(
           []__host__ __device__(ValueT &x) {
@@ -205,7 +208,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    */
 
 
-  cudaError_t Extract(ValueT *grad, ValueT *loss,
+  cudaError_t Extract(ValueT *grad_out, ValueT *loss,
                       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
@@ -216,8 +219,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       if (target == util::DEVICE) {
         GUARD_CU(util::SetDevice(this->gpu_idx[0]))
 
+//        util::PrintMsg(util::Location_to_string(data_slice.grad.GetSetted()));
+//        util::PrintMsg(util::Location_to_string(data_slice.grad.GetAllocated()));
+
         GUARD_CU(
-            data_slice.grad.SetPointer(grad,
+            data_slice.grad.SetPointer(grad_out,
                 data_slice.num_nodes * data_slice.num_classes, util::HOST))
         GUARD_CU(data_slice.grad.Move(util::DEVICE, util::HOST))
 
@@ -253,13 +259,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       auto &data_slice = data_slices[gpu][0];
       GUARD_CU(data_slice.Init(this->sub_graphs[gpu], num_nodes,
-        num_classes, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
+        num_classes, true, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
 
-      GUARD_CU(data_slice.logits.SetPointer(p_logits))
+      GUARD_CU(data_slice.logits.SetPointer(p_logits, num_nodes * num_classes, util::HOST))
       GUARD_CU(data_slice.logits.Move(util::HOST, util::DEVICE))
 
-      GUARD_CU(data_slice.ground_truth.SetPointer(truth))
+      GUARD_CU(data_slice.ground_truth.SetPointer(truth, num_nodes, util::HOST))
       GUARD_CU(data_slice.ground_truth.Move(util::HOST, util::DEVICE))
+//      data_slice.ground_truth.Print();
     }  // end for (gpu)
 
     return retval;

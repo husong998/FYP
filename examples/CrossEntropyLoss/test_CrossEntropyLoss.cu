@@ -12,7 +12,7 @@
  * @brief Simple test driver program for PageRank.
  */
 
-#include <gunrock/app/cross_entropy_loss/cross_entropy_loss_app.cu>
+#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_app.cu>
 #include <gunrock/app/test_base.cuh>
 #include <cstdio>
 #include <iostream>
@@ -52,17 +52,22 @@ struct main_struct {
 
     // randomizing inputs
     int *ground_truth = new int[num_nodes];
-    app::cross_entropy_loss::rand_truth(num_classes, num_nodes, ground_truth);
+    app::CrossEntropyLoss::rand_truth(num_classes, num_nodes, ground_truth);
     double *logits = new double[num_classes * num_nodes];
-    app::cross_entropy_loss::rand_logits(num_classes * num_nodes, logits);
+    app::CrossEntropyLoss::rand_logits(num_classes * num_nodes, logits);
 
     // run CPU_reference as benchmark
     double *ref_grad = new double[num_classes * num_nodes], ref_loss;
-    app::cross_entropy_loss::CPU_Reference(num_nodes, num_classes, logits, ground_truth, ref_grad, ref_loss);
+    app::CrossEntropyLoss::CPU_Reference(num_nodes, num_classes, logits, ground_truth, ref_grad, ref_loss);
+//    util::cpu_mt::PrintCPUArray("ref_grad", ref_grad, num_classes * num_nodes);
 
     double *cal_grad = new double[num_classes * num_nodes], cal_loss;
     GraphT g; // dummy graph to be passed to gunrock problem struct
-    cross_entropy_loss(parameters, g, num_nodes, num_classes, logits, ground_truth, cal_grad, cal_loss);
+    CrossEntropyLoss(parameters, g, num_nodes, num_classes, logits, ground_truth, cal_grad, cal_loss);
+
+    util::PrintMsg("ref_loss: " + std::to_string(ref_loss));
+    util::PrintMsg("cal_loss: " + std::to_string(cal_loss));
+    util::CompareResults(cal_grad, ref_grad, num_classes * num_nodes);
     return retval;
   }
 };
@@ -71,7 +76,7 @@ int main(int argc, char **argv) {
   cudaError_t retval = cudaSuccess;
   util::Parameters parameters("test graphsum");
   GUARD_CU(graphio::UseParameters(parameters));
-  GUARD_CU(app::cross_entropy_loss::UseParameters(parameters));
+  GUARD_CU(app::CrossEntropyLoss::UseParameters(parameters));
   GUARD_CU(app::UseParameters_test(parameters));
   GUARD_CU(parameters.Parse_CommandLine(argc, argv));
   GUARD_CU(parameters.Set("graph-type", "bypass"))
