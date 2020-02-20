@@ -223,7 +223,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @return     cudaError_t Error message(s), if any
    */
   cudaError_t Init(GraphT &graph, const int in_dim, const int outdim, const ValueT *in,
-      util::Location target = util::DEVICE) {
+                   util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -255,11 +255,46 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   }
 
   /**
+   * @brief      initialization function.
+   *
+   * @param      graph   The graph that SSSP processes on
+   * @param[in]  dim     The dimension of the feature vector
+   * @param[in]  target  The target
+   * @param[in]  Location  Memory location to work on
+   *
+   * @return     cudaError_t Error message(s), if any
+   */
+  cudaError_t Init(GraphT &graph, const int in_dim, const int outdim,
+      util::Array1D<SizeT, ValueT> *in, util::Location target = util::DEVICE) {
+    cudaError_t retval = cudaSuccess;
+    GUARD_CU(BaseProblem::Init(graph, target));
+    data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
+
+    for (int gpu = 0; gpu < this->num_gpus; gpu++) {
+      data_slices[gpu].SetName("data_slices[" + std::to_string(gpu) + "]");
+      if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+
+      GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
+
+      auto &data_slice = data_slices[gpu][0];
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], in_dim, outdim, this->num_gpus,
+                               this->gpu_idx[gpu], target, this->flag));
+
+      // Initialize input matrix
+      auto nodes = this->sub_graphs[gpu].nodes;
+      GUARD_CU(data_slice.input = *in)
+//      data_slice.input.Print();
+    }  // end for (gpu)
+
+    return retval;
+  }
+
+  /**
    * @brief Reset problem function. Must be called prior to each run.
    * @param[in] location Memory location to work on
    * \return cudaError_t Error message(s), if any
    */
-  cudaError_t Reset(const ValueT *in, util::Location target = util::DEVICE) {
+  cudaError_t Reset(util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {

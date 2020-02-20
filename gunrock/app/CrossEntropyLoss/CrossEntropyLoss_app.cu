@@ -65,6 +65,41 @@ cudaError_t UseParameters(util::Parameters &parameters) {
   return retval;
 }
 
+template <typename GraphT>
+class CrossEntropyLoss {
+  typedef gunrock::app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+  typedef gunrock::app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+  ProblemT *problem_ptr;
+  EnactorT enactor;
+public:
+  template <typename ValueT>
+  CrossEntropyLoss(gunrock::util::Parameter&, GraphT&, const int, const int, ValueT*,
+                   int*, ValueT*);
+};
+
+template <typename ValueT>
+double CrossEntropyLoss::CrossEntropyLoss(gunrock::util::Parameters &parameters,
+                                          GraphT &graph, const int num_nodes, const int num_classes, ValueT *logits,
+                                          int *ground_truth, ValueT *grad) {
+//  typedef typename GraphT::VertexT VertexT;
+  typedef gunrock::app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+  typedef gunrock::app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+  gunrock::util::CpuTimer cpu_timer;
+  gunrock::util::Location target = gunrock::util::DEVICE;
+  double total_time = 0;
+//  if (parameters.UseDefault("quiet")) parameters.Set("quiet", true);
+
+  // Allocate problem and enactor on GPU, and initialize them
+  problem_ptr = new ProblemT(parameters);
+  EnactorT enactor;
+  problem_pt->.Init(graph, num_nodes, num_classes, logits, ground_truth);
+  enactor.Init(problem, target);
+
+  problem->Reset();
+  enactor.Reset();
+}
+
+
 }
 }
 }

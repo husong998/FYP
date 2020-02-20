@@ -76,6 +76,110 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+template <typename ValueT>
+class sprMul {
+  typedef typename gunrock::app::TestGraph<int, int, ValueT,
+      gunrock::graph::HAS_EDGE_VALUES |
+      gunrock::graph::HAS_CSR> GraphT;
+  typedef gunrock::app::sparseMatMul::Problem<GraphT> ProblemT;
+  typedef gunrock::app::sparseMatMul::Enactor<ProblemT> EnactorT;
+  typedef typename GraphT::SizeT SizeT;
+  typedef gunrock::util::Parameters Parameters;
+  typedef gunrock::util::Array1D<SizeT, ValueT> Array1D;
+  ProblemT *problem;
+  EnactorT *enactor;
+  gunrock::util::Array1D<SizeT, ValueT> *W, *W_grad;
+
+  GraphT readFeature(Parameters &parameters, std::ifstream& svmlight_file,
+      int& dim, int& n_rows, int& nnz) {
+    std::vector<int> indptr, indices;
+    std::vector<ValueT> feature_val;
+    n_rows = 0, nnz = 0;
+    indptr.push_back(0);
+
+    int max_idx = 0, max_label = 0;
+    while(true) {
+      std::string line;
+      getline(svmlight_file, line);
+      if (svmlight_file.eof()) break;
+      indptr.push_back(indptr.back());
+      std::istringstream ss(line);
+
+      int label = -1;
+      ss >> label;
+//      labels.push_back(label);
+      if (ss.fail()) continue;
+      max_label = std::max(max_label, label);
+
+      while (true) {
+        std::string kv;
+        ss >> kv;
+        if(ss.fail()) break;
+        std::istringstream kv_ss(kv);
+
+        int k;
+        float v;
+        char col;
+        kv_ss >> k >> col >> v;
+
+        feature_val.push_back(v);
+        indices.push_back(k);
+        indptr.back() += 1;
+        max_idx = std::max(max_idx, k);
+      }
+    }
+    n_rows = indptr.size() - 1;
+    nnz = indices.size();
+    dim = max_idx + 1;
+//    gcnParams->output_dim = max_label + 1;
+    GraphT graph;
+    // Assign pointers into gunrock graph format
+    graph.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
+    graph.CsrT::row_offsets.SetPointer(indptr.data(), n_rows + 1, gunrock::util::HOST);
+    graph.CsrT::column_indices.SetPointer(indices.data(), nnz, gunrock::util::HOST);
+    graph.CsrT::edge_values.SetPointer(feature_val.data(), nnz, gunrock::util::HOST);
+
+//  graph.CsrT::row_offsets.Print();
+//  graph.CsrT::column_indices.Print();
+//  graph.CsrT::edge_values.Print();
+
+//  graph.Display();
+    graph.nodes = n_rows;
+    graph.edges = nnz;
+    gunrock::graphio::LoadGraph(parameters, graph);
+    return graph;
+  }
+public:
+  sprMul(Parameters &parameters, std::string X_file, const int hid_dim) {
+    problem = new ProblemT(parameters);
+    enactor = new EnactorT();
+
+    // reading in sparse matrix
+    int nnz, nrows, in_dim;
+    auto graph =
+        readFeature(parameters, std::ifstream(X_file), in_dim, nrows, nnz);
+
+    // init W and W_grad
+    W = new Array1D("W1");
+    W_grad = new Array1D ("W1_grad");
+    W.Allocate(in_dim * hid_dim);
+    W.Allocate(in_dim * hid_dim);
+    curandGenerator_t gen;
+    curandCreateGeneratorHost(&gen, CURAND_RNG_PSEUDO_DEFAULT);
+    curandSetPseudoRandomGeneratorSeed(gen,
+        std::chrono::system_clock::now().time_since_epoch().count());
+    curandGenerateUniformDouble(gen, W1.GetPointer(util::DEVICE), in_dim * hid_dim);
+
+    problem->Init(graph, in_dim, hid_dim, W);
+    enactor->Init(problem);
+
+    problem->Reset();
+    enactor->Reset();
+  }
+  cudaError_t forward(bool);
+  cudaError_t backward();
+};
+
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
 double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
                     const int out_dim, ValueT *in, ValueT *out) {
@@ -125,8 +229,8 @@ double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const 
  * @return     double      Return accumulated elapsed times for all runs
  */
 template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
-double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT n_rows, const SizeT nnz,
-    SizeT *row_offsets, VertexT *col_indices, ValueT *vals,
+double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT n_rows,
+    const SizeT nnz, SizeT *row_offsets, VertexT *col_indices, ValueT *vals,
     const int dim, const int outdim, ValueT *b, ValueT *c) {
   typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
                                            gunrock::graph::HAS_EDGE_VALUES |
