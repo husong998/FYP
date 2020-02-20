@@ -88,7 +88,7 @@ class sprMul {
   typedef gunrock::util::Array1D<SizeT, ValueT> Array1D;
   ProblemT *problem;
   EnactorT *enactor;
-  gunrock::util::Array1D<SizeT, ValueT> *W, *W_grad;
+  gunrock::util::Array1D<SizeT, ValueT> *W, *W_grad, *out, *out_grad;
 
   GraphT readFeature(Parameters &parameters, std::ifstream& svmlight_file,
       int& dim, int& n_rows, int& nnz) {
@@ -164,20 +164,36 @@ public:
     W_grad = new Array1D ("W1_grad");
     W.Allocate(in_dim * hid_dim);
     W.Allocate(in_dim * hid_dim);
+
+    // init out and out_grad
+    out = new Array1D("out");
+    out_grad = new Array1D("out_grad");
+    out.Allocate(nnz * hid_dim);
+    out.Allocate(nnz * hid_dim);
+
     curandGenerator_t gen;
     curandCreateGeneratorHost(&gen, CURAND_RNG_PSEUDO_DEFAULT);
     curandSetPseudoRandomGeneratorSeed(gen,
         std::chrono::system_clock::now().time_since_epoch().count());
-    curandGenerateUniformDouble(gen, W1.GetPointer(util::DEVICE), in_dim * hid_dim);
+    curandGenerateUniformDouble(gen, W.GetPointer(util::DEVICE), in_dim * hid_dim);
 
-    problem->Init(graph, in_dim, hid_dim, W);
+    problem->Init(graph, in_dim, hid_dim);
     enactor->Init(problem);
-
-    problem->Reset();
-    enactor->Reset();
   }
-  cudaError_t forward(bool);
-  cudaError_t backward();
+
+  cudaError_t forward() {
+    cudaError_t retval = cudaSuccess;
+
+    problem->Reset(W, out, 1);
+    enactor->Reset();
+    enactor->enact();
+  }
+
+  cudaError_t backward() {
+    problem->Reset(out_grad, W_grad, 0);
+    enactor->Reset();
+    enactor->enact();
+  }
 };
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>

@@ -75,9 +75,10 @@ struct GraphsumIterationLoop
     auto &out = data_slice.output;
     auto &local_vertices = data_slice.local_vertices;
     auto &weights = graph.CsrT::edge_values;
+    auto &mode = data_slice.mode;
 
     // The advance operation
-    auto advance_lambda =
+    auto forward_lambda =
         [in, out, graph, out_dim, weights] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
@@ -90,6 +91,20 @@ struct GraphsumIterationLoop
       }
       return true;
     };
+
+    auto backward_lambda =
+    [in, out, graph, out_dim, weights] __host__ __device__(
+        const VertexT &src, VertexT &dest, const SizeT &edge_id,
+        const VertexT &input_item, const SizeT &input_pos,
+    SizeT &output_pos) -> bool {
+//      printf("src: %d, dest: %d, edge_id: %d, weight: %.2lf\n", src, dest, edge_id
+//      , weights[edge_id]);
+        for (int i = 0; i < out_dim; i++) {
+          atomicAdd(out + dest * out_dim + i, weights[edge_id] * in[src * out_dim + i]);
+//        printf("%.4lf ", out[src * out_dim + i]);
+        }
+        return true;
+    };
 //    std::cerr << "iteration: " << iteration << "\n";
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
@@ -98,7 +113,7 @@ struct GraphsumIterationLoop
     null_ptr = NULL;
     GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
         graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_lambda));
+        mode ? forward_lambda : backward_lambda));
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;

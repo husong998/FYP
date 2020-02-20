@@ -64,6 +64,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     util::Array1D<SizeT, ValueT> input, output;
     util::Array1D<SizeT, VertexT> local_vertices;
     int in_dim, out_dim;
+    bool mode;
 
     /*
      * @brief Default constructor
@@ -112,7 +113,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
-      GUARD_CU(input.Allocate(in_dim * out_dim, util::HOST));
+//      GUARD_CU(input.Allocate(in_dim * out_dim, util::HOST));
       GUARD_CU(output.Allocate(sub_graph.nodes * out_dim, target));
       GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
 
@@ -265,7 +266,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @return     cudaError_t Error message(s), if any
    */
   cudaError_t Init(GraphT &graph, const int in_dim, const int outdim,
-      util::Array1D<SizeT, ValueT> *in, util::Location target = util::DEVICE) {
+      util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -282,7 +283,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       // Initialize input matrix
       auto nodes = this->sub_graphs[gpu].nodes;
-      GUARD_CU(data_slice.input = *in)
 //      data_slice.input.Print();
     }  // end for (gpu)
 
@@ -294,12 +294,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @param[in] location Memory location to work on
    * \return cudaError_t Error message(s), if any
    */
-  cudaError_t Reset(util::Location target = util::DEVICE) {
+  cudaError_t Reset(util::Array1D<SizeT, ValueT> *in,
+      util::Array1D<SizeT, ValueT> *out, const bool mode,
+      util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+      GUARD_CU(data_slices[gpu].input = *in)
+      GUARD_CU(data_slices[gpu].mode = mode)
+      GUARD_CU(data_slices[gpu].ouput = *out)
       GUARD_CU(data_slices[gpu]->Reset(target));
       GUARD_CU(data_slices[gpu].Move(util::HOST, target));
     }
