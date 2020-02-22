@@ -135,6 +135,66 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+template <typename ValueT>
+class matMul {
+  typedef gunrock::util::Array1D<int, ValueT> Array1D;
+  Array1D *a, *b, *c, *a_grad, *b_grad, *c_grad;
+  int n, m, p;
+public:
+  matMul(Array1D *_a, Array1D *_a_grad, Array1D *_b, Array1D *_b_grad,
+      Array1D *_c, Array1D *_c_grad, int _m, int _n, int _p) : a(_a), b(_b),
+      c(_c), a_grad(_a_grad), b_grad(_b_grad), c_grad(_c_grad), n(_n), m(_m),
+      p(_p) {}
+
+  cudaError_t forward() {
+    cudaError_t retval = cudaSuccess;
+    assert(a->GetSize() == m * n && b->GetSize() == n * p &&
+    c->GetSize() == m * p);
+
+    GUARD_CU(c->ForEach([]__host__ __device__(ValueT &x) {
+      x = 0;
+    }));
+
+    GUARD_CU(a->ForAll(
+        [b, c, p, n]__host__ __device__(ValueT *a_, const int pos) {
+          int i = pos / n, j = pos % n;
+          for (int k = 0; k < p; k++) {
+            atomicAdd(c + i * p + k, a_[pos] * b[j * p + k]);
+    //            printf("i: %d\n", i * p + k);
+          }
+        }, m * n, gunrock::util::DEVICE
+        ))
+
+     return retval;
+  }
+
+  cudaError_t backward() {
+    cudaError_t retval = cudaSuccess;
+    assert(a_grad->GetSize() == m * n && b_grad->GetSize() == n * p &&
+           c_grad->GetSize() == m * p);
+
+    GUARD_CU(a_grad->ForEach([]__host__ __device__(ValueT &x) {
+      x = 0;
+    }));
+
+    GUARD_CU(b_grad->ForEach([]__host__ __device__(ValueT &x) {
+      x = 0;
+    }));
+
+    GUARD_CU(a_grad->ForAll(
+        [b_grad, c_grad, p, n]__host__ __device__(ValueT *a_, const int pos) {
+          int i = pos / n, j = pos % n;
+          for (int k = 0; k < p; k++) {
+            atomicAdd(b_grad + j * p + k, a_[pos] * c_grad[i * p + k]);
+            //            printf("i: %d\n", i * p + k);
+          }
+        }, m * n, gunrock::util::DEVICE
+        ))
+
+    return retval;
+  }
+};
+
 // Leave this at the end of the file
 // Local Variables:
 // mode:c++
