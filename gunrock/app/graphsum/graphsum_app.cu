@@ -78,6 +78,49 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+template <typename ValueT>
+class graphsum {
+  typedef typename gunrock::app::TestGraph<int, int, ValueT,
+      gunrock::graph::HAS_CSR> GraphT;
+  typedef gunrock::app::graphsum::Problem<GraphT> ProblemT;
+  typedef gunrock::app::graphsum::Enactor<ProblemT> EnactorT;
+  typedef typename GraphT::SizeT SizeT;
+  typedef gunrock::util::Parameters Parameters;
+  typedef gunrock::util::Array1D<SizeT, ValueT> Array1D;
+  ProblemT *problem;
+  EnactorT *enactor;
+  gunrock::util::Array1D<SizeT, ValueT> *b, *b_grad, *out, *out_grad;
+
+public:
+  graphsum(Parameters &parameters, GraphT &graph, const int hid_dim,
+      Array1D *_b, Array1D *_b_grad) : b(_b), b_grad(_b_grad) {
+    problem = new ProblemT(parameters);
+    enactor = new EnactorT();
+
+    out = new Array1D("b");
+    out_grad = new Array1D("b_grad");
+    out.Allocate(graph.nodes * hid_dim);
+    out_grad.Allocate(graph.nodes * hid_dim);
+
+    problem->Init(graph, hid_dim);
+    enactor->Init(problem);
+  }
+
+  cudaError_t forward() {
+    cudaError_t retval = cudaSuccess;
+
+    problem->Reset(b, out);
+    enactor->Reset();
+    enactor->enact();
+  }
+
+  cudaError_t backward() {
+    problem->Reset(out_grad, b_grad);
+    enactor->Reset();
+    enactor->enact();
+  }
+};
+
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
 double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
                     ValueT *in, ValueT *out) {

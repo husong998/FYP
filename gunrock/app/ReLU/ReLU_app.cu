@@ -102,6 +102,35 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+template <typename ValueT>
+class relu {
+  typedef gunrock::util::Array1D<int, ValueT> Array1D;
+
+  Array1D *in, *in_grad;
+public:
+  relu(Array1D *_in) : in(_in) {
+    *in_grad = new Array1D("relu_grad");
+    in_grad->Allocate(in->GetSize(), gunrock::util::DEVICE);
+  }
+  cudaError_t forward() {
+    cudaError_t retval = cudaSuccess;
+    GUARD_CU(
+        in->ForEach([]__host__ __device__(ValueT &x) {
+          x= max(0.0, x);
+        }, in->GetSize(), gunrock::util::DEVICE
+        ))
+  }
+  cudaError_t backward() {
+    cudaError_t retval = cudaSuccess;
+    GUARD_CU(
+        in_grad->ForEach(*in,
+            []__host__ __device__(ValueT &grad, ValueT &val) {
+          if (val < 0) grad = 0;
+        }, in_grad->GetSize(), gunrock::util::DEVICE
+        ))
+  }
+};
+
 // Leave this at the end of the file
 // Local Variables:
 // mode:c++
