@@ -40,7 +40,7 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  * @tparam EnactorT Type of enactor
  */
 template <typename EnactorT>
-struct GraphsumIterationLoop
+struct GCNIterationLoop
     : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
@@ -50,7 +50,7 @@ struct GraphsumIterationLoop
   typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
-  GraphsumIterationLoop() : BaseIterationLoop() {}
+  GCNIterationLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -64,40 +64,36 @@ struct GraphsumIterationLoop
         this->enactor
             ->enactor_slices[this->gpu_num * this->enactor->num_gpus + peer_];
     auto &enactor_stats = enactor_slice.enactor_stats;
-    auto &graph = data_slice.sub_graph[0];
-    auto &frontier = enactor_slice.frontier;
-    auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
     auto &iteration = enactor_stats.iteration;
-    auto &dim = data_slice.dim;
-    auto &in = data_slice.input;
-    auto &out = data_slice.output;
-    auto &local_vertices = data_slice.local_vertices;
+    auto &modules = data_slice.modules;
+    auto &vars = data_slice.vars;
+    auto &eps = data_slice.eps, &learning_rate = data_slice.learning_rate, &beta1 = data_slice.beta1,
+    &beta2 = data_slice.beta2, &weight_decay = data_slice.weight_decay;
+    auto &training = data_slice.training;
 
-    // The advance operation
-    auto advance_lambda =
-        [in, out, graph, dim] __host__ __device__(
-            const VertexT &src, VertexT &dest, const SizeT &edge_id,
-            const VertexT &input_item, const SizeT &input_pos,
-            SizeT &output_pos) -> bool {
-      ValueT coef = (long long)graph.GetNeighborListLength(src) *
-          graph.GetNeighborListLength(dest);
-      coef = 1.0 / sqrt(coef);
-      for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
-      return true;
-    };
-//    std::cerr << "iteration: " << iteration << "\n";
-    frontier.queue_length = local_vertices.GetSize();
-    frontier.queue_reset = true;
-    oprtr_parameters.advance_mode = "ALL_EDGES";
-    auto null_ptr = &local_vertices;
-    null_ptr = NULL;
-    GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
-        graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_lambda));
+    for (auto m : modules) {
+      m->forward();
+    }
 
-    enactor_stats.edges_queued[0] += graph.edges;
+    if (training) {
+      ValueT step_size = learning_rate * sqrt(1 - pow (beta2, iteration + 1)) / (1 - pow (beta1, iteration + 1));
+      for (int i = modules.size() - 1; i >= 0; i--) {
+        modules[i]->backward();
+      }
+      for (auto var : vars) {
+        auto &w = *var.weights, &g = *var.grads, &m = *var.m, &v = *var.v;
+        // TODO: step_size may need to be calculated on the fly
+        GUARD_CU (w.ForAll(
+            [g, m, v, weight_decay, beta1, beta2, step_size, eps]__host__ __device__(ValueT &ws, SizeT &i) {
+              ValueT grad = g[i] + weight_decay * ws[i];
+              m[i] = beta1 * m[i] + (1 - beta1) * grad;
+              v[i] = beta2 * v[i] + (1 - beta2) * grad * grad;
+              ws[i] -= step_size * m[i] / (sqrt(v[i]) + eps);
+            }
+            ))
+      }
+    }
     return retval;
   }
 
@@ -113,7 +109,7 @@ struct GraphsumIterationLoop
       return true;
     }
 
-//    auto &data_slices = this->enactor->problem->data_slices;
+    auto &data_slices = this->enactor->problem->data_slices;
 //    bool all_zero = true;
 //    for (int gpu = 0; gpu < num_gpus; gpu++)
 //      if (data_slices[gpu]->num_updated_vertices)  // PR_queue_length > 0)
@@ -125,7 +121,7 @@ struct GraphsumIterationLoop
 //    if (all_zero) return true;
 
     for (int gpu = 0; gpu < num_gpus; gpu++)
-      if (enactor_slices[gpu * num_gpus].enactor_stats.iteration < 1) {
+      if (enactor_slices[gpu * num_gpus].enactor_stats.iteration < data_slices[0]->max_iter) {
         // printf("enactor_stats[%d].iteration = %lld\n", gpu, enactor_stats[gpu
         // * num_gpus].iteration);
         return false;
@@ -172,7 +168,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef GraphsumIterationLoop<EnactorT> IterationT;
+  typedef GCNIterationLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;

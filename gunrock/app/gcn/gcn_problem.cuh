@@ -70,6 +70,18 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   // Helper structures
 
+  struct adam_var {
+    Array *weights, *grads, *m, *v;
+    adam_var(Array *_w, Array *_g) : weights(_w), grads(_g) {
+      m = new Array();
+      m->Allocate (weights->GetSize (), util::DEVICE);
+      m->ForEach ([]__host__ __device__(ValueT &x) { x = 0; });
+      v = new Array();
+      v->Allocate (weights->GetSize (), util::DEVICE);
+      v->ForEach ([]__host__ __device__(ValueT &x) { x = 0; });
+    }
+  };
+
   struct sprmul : module {
     typedef app::sparseMatMul::Problem<GraphT> ProblemT;
     typedef app::sparseMatMul::Enactor<ProblemT> EnactorT;
@@ -299,12 +311,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     static constexpr double learning_rate = 0.01, beta1 = 0.9, beta2 = 0.999, eps = 1e-8, weight_decay = 5e-4;
 
     std::vector<module*> modules;
-    std::vector<Array*> weights;
+    std::vector<adam_var> vars;
     util::Array<SizeT, int> truth;
     Array w0, xw0, Axw0, Axw0w1, AAxw0w1, w1, loss;
     Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad;
 
-    int in_dim, hid_dim, out_dim, num_nodes;
+    int in_dim, hid_dim, out_dim, num_nodes, max_iter;
+    bool training;
     /*
      * @brief Default constructor
      */
@@ -360,6 +373,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       this->in_dim = parameters.Get<int>("in_dim");
       this->hid_dim = parameters.Get<int>("hid_dim");
       this->out_dim = parameters.Get<int>("out_dim");
+      this->max_iter = parameters.Get<int>("max_iter");
+      this->training = parameters.Get<bool>("training");
       this->num_nodes = sub_graph.nodes;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
@@ -405,6 +420,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim));
       modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, AAxw0w1, AAxw0w1_grad, num_nodes, hid_dim, out_dim));
       modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, loss, truth, num_nodes, out_dim))
+
+      vars.emplace_back(w0, w0_grad);
+      vars.emplace_back(w1, w1_grad);
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;
