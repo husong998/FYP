@@ -18,6 +18,7 @@
 #include <gunrock/app/sparseMatMul/sparseMatMul_app.cu>
 #include <gunrock/app/graphsum/graphsum_app.cu>
 #include <gunrock/app/sparseMatMul/sparseMatMul_app.cu>
+#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_app.cu>
 
 namespace gunrock {
 namespace app {
@@ -64,6 +65,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   typedef ProblemBase<GraphT, FLAG> BaseProblem;
   typedef DataSliceBase<GraphT, FLAG> BaseDataSlice;
   typedef util::Parameters Parameters;
+
+  typedef util::Array1D<SizeT, ValueT> Array;
 
   // Helper structures
 
@@ -132,6 +135,37 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Reset();
       enactor->enact();
     }
+  };
+
+  struct cross_entropy : module {
+    typedef app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+    typedef app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+
+    GraphT dummy;
+    util::Array1D<SizeT, ValueT> logits, grad, loss;
+    util::Array1D<SizeT, int> truth;
+    ProblemT *problem;
+    EnactorT *enactor;
+    int dim;
+
+    cross_entropy(Parameters &p, Array _logits, Array _grad, Array _loss,
+                  util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes,
+                  bool training=true) :
+        logits(_logits), grad(_grad), loss(_loss), truth(_truth) {
+      problem = new ProblemT(p);
+      enactor = new EnactorT(*problem);
+
+      problem->Init(dummy, num_nodes, num_classes, logits, truth, training);
+      enactor->Init();
+    }
+
+    virtual void forward() override {
+      problem->Reset();
+      enactor->Reset();
+      enactor->enact();
+    }
+
+    virtual void backward() override {}
   };
 
   struct mat_mul : module {
@@ -256,17 +290,35 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @brief Data structure containing graphsum-specific data on indivual GPU.
    */
   struct DataSlice : BaseDataSlice {
-    util::Array1D<SizeT, ValueT> input, output;
-    util::Array1D<SizeT, VertexT> local_vertices;
-    int dim;
+    typedef util::Array1D<SizeT, ValueT> Array;
 
+    static constexpr double learning_rate = 0.01, beta1 = 0.9, beta2 = 0.999, eps = 1e-8, weight_decay = 5e-4;
+
+    std::vector<module*> modules;
+    std::vector<Array*> weights;
+    util::Array<SizeT, int> truth;
+    Array w0, xw0, Axw0, Axw0w1, AAxw0w1, w1, loss;
+    Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad;
+
+    int in_dim, hid_dim, out_dim, num_nodes;
     /*
      * @brief Default constructor
      */
     DataSlice() : BaseDataSlice() {
-      input.SetName("input");
-      output.SetName("output");
-      local_vertices.SetName("local_vertices");
+      loss.SetName ("loss");
+      truth.SetName ("truth");
+      w0.SetName ("w0");
+      w1.SetName ("w1");
+      xw0.SetName ("xw0");
+      Axw0.SetName ("Axw0");
+      Axw0w1.SetName ("Axw0w1");
+      AAxw0w1.SetName ("AAxw0w1");
+      w0_grad.SetName ("w0_grad");
+      w1_grad.SetName ("w1_grad");
+      xw0_grad.SetName ("xw0_grad");
+      Axw0_grad.SetName ("Axw0_grad");
+      Axw0w1_grad.SetName ("Axw0w1_grad");
+      AAxw0w1_grad.SetName ("AAxw0w1_grad");
     }
 
     /*
@@ -283,8 +335,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       cudaError_t retval = cudaSuccess;
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx));
 
-      GUARD_CU(input.Release(target));
-      GUARD_CU(output.Release(target));
       GUARD_CU(BaseDataSlice ::Release(target));
       return retval;
     }
@@ -298,17 +348,59 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] flag        Problem flag containling options
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Init(GraphT &sub_graph, const int dim,
+    cudaError_t Init(GraphT &sub_graph, util::Parameters &parameters, GraphT &x, int *_truth,
                      int num_gpus = 1, int gpu_idx = 0,
                      util::Location target = util::DEVICE,
                      ProblemFlag flag = Problem_None) {
-      this->dim = dim;
       cudaError_t retval = cudaSuccess;
+      this->in_dim = parameters.Get<int>("in_dim");
+      this->hid_dim = parameters.Get<int>("hid_dim");
+      this->out_dim = parameters.Get<int>("out_dim");
+      this->num_nodes = sub_graph.nodes;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
-      GUARD_CU(input.Allocate(sub_graph.nodes * dim, util::HOST));
-      GUARD_CU(output.Allocate(sub_graph.nodes * dim, target));
-      GUARD_CU(local_vertices.Allocate(sub_graph.nodes, target));
+
+      GUARD_CU (w0.Allocate (in_dim * hid_dim))
+      GUARD_CU (w1.Allocate (hid_dim * out_dim))
+      GUARD_CU (xw0.Allocate (num_nodes * hid_dim))
+      GUARD_CU (Axw0.Allocate (num_nodes * hid_dim))
+      GUARD_CU (Axw0w1.Allocate (num_nodes * out_dim))
+      GUARD_CU (AAxw0w1.Allocate (num_nodes * out_dim))
+      GUARD_CU (w0_grad.Allocate (in_dim * hid_dim))
+      GUARD_CU (w1_grad.Allocate (hid_dim * out_dim))
+      GUARD_CU (xw0_grad.Allocate (num_nodes * hid_dim))
+      GUARD_CU (Axw0_grad.Allocate (num_nodes * hid_dim))
+      GUARD_CU (Axw0w1_grad.Allocate (num_nodes * out_dim))
+      GUARD_CU (AAxw0w1_grad.Allocate (num_nodes * out_dim))
+      GUARD_CU (AAxw0w1_grad.Allocate (1))
+
+      GUARD_CU (loss.ForEach([]__host__ __device__(ValueT &x) { x = 0; }))
+
+      GUARD_CU (truth.SetPointer(_truth, num_nodes, util::HOST))
+      GUARD_CU (truth.Move(util::HOST, util::DEVICE))
+
+      curandGenerator_t gen;
+      curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
+      curandGenerateUniformDouble(gen, w0.GetPointer(util::DEVICE), w0.GetSetted ());
+      ValueT range = sqrt (6.0 / (in_dim + hid_dim));
+      GUARD_CU (w0.ForEach (
+          [range]__host__ __device__(ValueT &x) {
+            x = (x - 0.5) * range * 2;
+          }
+      ))
+      curandGenerateUniformDouble(gen, w1.GetPointer(util::DEVICE), w1.GetSetted ());
+      range = sqrt (6.0 / (out_dim + hid_dim));
+      GUARD_CU (w0.ForEach (
+          [range]__host__ __device__(ValueT &x) {
+            x = (x - 0.5) * range * 2;
+          }
+      ))
+
+      modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim));
+      modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim));
+      modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim));
+      modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, AAxw0w1, AAxw0w1_grad, num_nodes, hid_dim, out_dim));
+      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, loss, truth, num_nodes, out_dim))
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;
@@ -386,7 +478,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    */
 
 
-  cudaError_t Extract(ValueT *out,
+  cudaError_t Extract(ValueT *_w0, ValueT *_w1,
                       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     SizeT nodes = this->org_graph->nodes;
@@ -397,14 +489,69 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       // Set device
       if (target == util::DEVICE) {
         GUARD_CU(util::SetDevice(this->gpu_idx[0]));
-
-        GUARD_CU(
-            data_slice.output.SetPointer(out, nodes, util::HOST));
-        GUARD_CU(data_slice.output.Move(util::DEVICE, util::HOST));
+        GUARD_CU (data_slice.w0.SetPointer(_w0, data_slice.in_dim * data_slice.hid_dim))
+        GUARD_CU (data_slice.w0.Move(util::DEVICE, util::HOST))
+        GUARD_CU (data_slice.w1.SetPointer(_w1, data_slice.out_dim * data_slice.hid_dim))
+        GUARD_CU (data_slice.w1.Move(util::DEVICE, util::HOST))
       }
     }
 
     return retval;
+  }
+
+  cudaError_t read_feature(Parameters &p, GraphT &g) {
+    auto retval = cudaSuccess;
+
+    int n_rows = 0, nnz = 0, dim;
+    std::vector<int> indptr, indices;
+    std::vector<ValueT> feature_val;
+    indptr.push_back(0);
+    std::ifstream svmlight_file(p.Get<std::string>("feature_file"));
+
+    int max_idx = 0, max_label = 0;
+    while(true) {
+        std::string line;
+        getline(svmlight_file, line);
+        if (svmlight_file.eof()) break;
+        indptr.push_back(indptr.back());
+        std::istringstream ss(line);
+
+        int label = -1;
+        ss >> label;
+//      labels.push_back(label);
+        if (ss.fail()) continue;
+        max_label = std::max(max_label, label);
+
+        while (true) {
+            std::string kv;
+            ss >> kv;
+            if(ss.fail()) break;
+            std::istringstream kv_ss(kv);
+
+            int k;
+            float v;
+            char col;
+            kv_ss >> k >> col >> v;
+
+            feature_val.push_back(v);
+            indices.push_back(k);
+            indptr.back() += 1;
+            max_idx = std::max(max_idx, k);
+          }
+      }
+    n_rows = indptr.size() - 1;
+    nnz = indices.size();
+    dim = max_idx + 1;
+    p.Set("in_dim", dim);
+
+    g.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
+    g.CsrT::row_offsets.SetPointer(indptr.data(), n_rows + 1, gunrock::util::HOST);
+    g.CsrT::column_indices.SetPointer(indices.data(), nnz, gunrock::util::HOST);
+    g.CsrT::edge_values.SetPointer(feature_val.data(), nnz, gunrock::util::HOST);
+
+    g.nodes = n_rows;
+    g.edges = nnz;
+    gunrock::graphio::LoadGraph(p, g);
   }
 
   /**
@@ -417,7 +564,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, const int dim, const ValueT *in,
+  cudaError_t Init(GraphT &graph, int *_truth,
       util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
@@ -430,20 +577,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
 
       auto &data_slice = data_slices[gpu][0];
-      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], dim, this->num_gpus,
-                               this->gpu_idx[gpu], target, this->flag));
-
-      // Initialize input matrix
-      auto nodes = this->sub_graphs[gpu].nodes;
-      GUARD_CU(data_slice.input.EnsureSize_(nodes * dim));
-      util::PrintMsg("dataslice input size: " + std::to_string(nodes * dim));
-      GUARD_CU(data_slice.input.ForAll(
-               [in] __host__ __device__(ValueT *in_, const SizeT &pos) {
-        in_[pos] = in[pos];
-      }, nodes * dim, util::HOST
-               ));
-      data_slice.input.Move(util::HOST, util::DEVICE);
-      data_slice.input.Print();
+      GraphT in;
+      GUARD_CU (read_feature (parameters, in))
+      data_slice.Init(this->sub_graphs[gpu], parameters, in, _truth, this->num_gpus,
+                               this->gpu_idx[gpu], target, this->flag);
     }  // end for (gpu)
 
     return retval;

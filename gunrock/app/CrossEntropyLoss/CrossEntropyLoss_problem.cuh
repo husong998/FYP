@@ -246,7 +246,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @return     cudaError_t Error message(s), if any
    */
   cudaError_t Init(GraphT &graph, const int num_nodes, const int num_classes, ValueT *p_logits,
-      int *truth, util::Location target = util::DEVICE) {
+      int *truth, bool training = 1, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -259,7 +259,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       auto &data_slice = data_slices[gpu][0];
       GUARD_CU(data_slice.Init(this->sub_graphs[gpu], num_nodes,
-        num_classes, true, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
+        num_classes, training, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
 
       GUARD_CU(data_slice.logits.SetPointer(p_logits, num_nodes * num_classes, util::HOST))
       GUARD_CU(data_slice.logits.Move(util::HOST, util::DEVICE))
