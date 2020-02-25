@@ -212,6 +212,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         }
       }, m * n, util::DEVICE
                ));
+
+      return retval;
     }
 
     cudaError_t dobw() {
@@ -244,6 +246,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         a_[i * n + j] = tmp;
       }, m * n, util::DEVICE
                ));
+
+      return retval;
     }
   };
 
@@ -499,11 +503,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     return retval;
   }
 
-  cudaError_t read_feature(Parameters &p, GraphT &g) {
+  cudaError_t read_feature(Parameters &p, GraphT &g, int *truth) {
     auto retval = cudaSuccess;
 
     int n_rows = 0, nnz = 0, dim;
-    std::vector<int> indptr, indices;
+    std::vector<int> indptr, indices, labels;
     std::vector<ValueT> feature_val;
     indptr.push_back(0);
     std::ifstream svmlight_file(p.Get<std::string>("feature_file"));
@@ -518,7 +522,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
         int label = -1;
         ss >> label;
-//      labels.push_back(label);
+        labels.push_back(label);
         if (ss.fail()) continue;
         max_label = std::max(max_label, label);
 
@@ -542,16 +546,35 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     n_rows = indptr.size() - 1;
     nnz = indices.size();
     dim = max_idx + 1;
+
     p.Set("in_dim", dim);
+    p.Set("out_dim", max_label + 1);
 
     g.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
     g.CsrT::row_offsets.SetPointer(indptr.data(), n_rows + 1, gunrock::util::HOST);
     g.CsrT::column_indices.SetPointer(indices.data(), nnz, gunrock::util::HOST);
     g.CsrT::edge_values.SetPointer(feature_val.data(), nnz, gunrock::util::HOST);
-
     g.nodes = n_rows;
     g.edges = nnz;
     gunrock::graphio::LoadGraph(p, g);
+
+    truth = labels.data();
+
+    return retval;
+  }
+
+  void split(Parameters &p, int *truth, int split_id = 1) {
+    std::ifstream split_file(p.Get<std::string>("split_file"));
+    int node_id = 0;
+
+    while (true) {
+      std::string line;
+      getline(split_file, line);
+      if (split_file.eof()) break;
+      int cur_split = stoi(line);
+      if (cur_split != split_id) truth[node_id] = -1;
+      ++node_id;
+    }
   }
 
   /**
@@ -564,8 +587,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    *
    * @return     cudaError_t Error message(s), if any
    */
-  cudaError_t Init(GraphT &graph, int *_truth,
-      util::Location target = util::DEVICE) {
+  cudaError_t Init(GraphT &graph, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
     data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
@@ -578,7 +600,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       auto &data_slice = data_slices[gpu][0];
       GraphT in;
-      GUARD_CU (read_feature (parameters, in))
+      int *_truth = new int[graph.nodes];
+      read_feature (parameters, in, _truth);
+      split(parameters, _truth);
       data_slice.Init(this->sub_graphs[gpu], parameters, in, _truth, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag);
     }  // end for (gpu)
