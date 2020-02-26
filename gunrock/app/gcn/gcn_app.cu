@@ -22,7 +22,7 @@
 #include <gunrock/app/test_base.cuh>
 
 // single-source shortest path includes
-#include <gunrock/app/graphsum/graphsum_enactor.cuh>
+#include <gunrock/app/gcn/gcn_enactor.cuh>
 
 /**
  * @brief      graphsum layer of GCN
@@ -79,7 +79,7 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
+double gcn(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
                     ValueT *in, ValueT *out) {
   typedef typename GraphT::VertexT VertexT;
   typedef gunrock::app::gcn::Problem<GraphT> ProblemT;
@@ -87,15 +87,15 @@ double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const 
   gunrock::util::CpuTimer cpu_timer;
   gunrock::util::Location target = gunrock::util::DEVICE;
   double total_time = 0;
-  if (parameters.UseDefault("quiet")) parameters.Set("quiet", true);
+  parameters.Set("quiet", false);
 
   // Allocate problem and enactor on GPU, and initialize them
   ProblemT problem(parameters);
   EnactorT enactor;
-  problem.Init(graph, dim, in, target);
+  problem.Init(graph);
   enactor.Init(problem, target);
 
-  problem.Reset(in);
+  problem.Reset();
   enactor.Reset();
 
   cpu_timer.Start();
@@ -103,61 +103,12 @@ double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const 
   cpu_timer.Stop();
 
   total_time += cpu_timer.ElapsedMillis();
-  problem.Extract(out);
+//  problem.Extract(out);
 
   enactor.Release(target);
   problem.Release(target);
 
   return total_time;
-}
-
-/*
- * @brief      Simple interface take in graph as CSR format
- *
- * @param[in]  num_nodes    Number of veritces in the input graph
- * @param[in]  num_edges    Number of edges in the input graph
- * @param[in]  row_offsets  CSR-formatted graph input row offsets
- * @param[in]  col_indices  CSR-formatted graph input column indices
- * @param[in]  dim          The dimenssion of the feature vector
- * @param      in           The input to graphsum layer
- * @param      out          The output of graphsum layer
- *
- * @tparam     VertexT      type of vertex id, default to int
- *
- * @return     double      Return accumulated elapsed times for all runs
- */
-template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
-double graphsum(const SizeT num_nodes, const SizeT num_edges,
-            const SizeT *row_offsets, const VertexT *col_indices, const int dim,
-            ValueT *in, ValueT *out) {
-  typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
-  gunrock::graph::HAS_CSR> GraphT;
-  typedef typename GraphT::CsrT CsrT;
-
-  // Setup parameters
-  gunrock::util::Parameters parameters("sparseMatMul");
-  gunrock::graphio::UseParameters(parameters);
-  gunrock::app::gcn::UseParameters(parameters);
-  gunrock::app::UseParameters_test(parameters);
-  parameters.Parse_CommandLine(0, NULL);
-  parameters.Set("graph-type", "by-pass");
-
-  bool quiet = parameters.Get<bool>("quiet");
-  GraphT graph;
-  // Assign pointers into gunrock graph format
-  graph.CsrT::Allocate(num_nodes, num_edges, gunrock::util::HOST);
-  graph.CsrT::row_offsets.SetPointer(row_offsets, num_nodes + 1, gunrock::util::HOST);
-  graph.CsrT::column_indices.SetPointer(col_indices, num_edges, gunrock::util::HOST);
-//  graph.FromCsr(graph.csr());
-  gunrock::graphio::LoadGraph(parameters, graph);
-
-  // Run the gcn_graphsum
-  double elapsed_time = gcn_graphsum(parameters, graph, in, out);
-
-  // Cleanup
-  graph.Release();
-
-  return elapsed_time;
 }
 
 // Leave this at the end of the file

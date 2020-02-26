@@ -17,7 +17,7 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/graphsum/graphsum_problem.cuh>
+#include <gunrock/app/gcn/gcn_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 namespace gunrock {
@@ -71,6 +71,13 @@ struct GCNIterationLoop
     auto &eps = data_slice.eps, &learning_rate = data_slice.learning_rate, &beta1 = data_slice.beta1,
     &beta2 = data_slice.beta2, &weight_decay = data_slice.weight_decay;
     auto &training = data_slice.training;
+    auto &w0 = data_slice.w0;
+    auto &penalty = data_slice.penalty;
+    auto &truth = data_slice.truth;
+    auto &out = data_slice.AAxw0w1;
+    auto &cnt = data_slice.cnt;
+    auto &out_dim = data_slice.out_dim;
+    auto &wrong = data_slice.wrong;
 
     for (auto m : modules) {
       m->forward();
@@ -93,6 +100,39 @@ struct GCNIterationLoop
             }
             ))
       }
+
+      GUARD_CU (penalty.ForEach([]__host__ __device__(ValueT &x) { x = 0; }))
+      GUARD_CU (w0.ForEach(
+          [penalty]__host__ __device__(ValueT &x) {
+            atomicAdd (penalty + 0, x * x);
+          }
+          ))
+      GUARD_CU (penalty +=
+          static_cast<decltype(modules.back())>(modules.back())->GetLoss())
+      GUARD_CU (penalty.Print())
+
+      GUARD_CU (cnt.ForEach([]__host__ __device__(int &x) { x = 0; }))
+      GUARD_CU (wrong.ForEach([]__host__ __device__(int &x) { x = 0; }))
+      GUARD_CU (truth.ForAll(out, cnt,
+          [wrong]__host__ __device__(int *label, ValueT *logits, int *counter, SizeT &i) {
+        if (label[i] < 0) return;
+        atomicAdd (counter, 1);
+        auto logit = logits + i * out_dim;
+        for (int j = 0; j < out_dim; j++) {
+          if (logit[j] > logit[label[i]]) {
+            atomicAdd (wrong + 0, 1);
+            return;
+          }
+        }
+      }))
+
+      int total, wrong_h;
+      GUARD_CU (cnt.SetPointer(&totol, 1, util::HOST))
+      GUARD_CU (wrong.SetPointer(&wrong_h, 1, util::HOST))
+      GUARD_CU (cnt.Move(util::DEVICE, util::HOST))
+      GUARD_CU (wrong.Move(util::DEVICE, util::HOST))
+
+      std::cout << "accuracy: " << wrong_h * 1.0 / total << '\n';
     }
     return retval;
   }

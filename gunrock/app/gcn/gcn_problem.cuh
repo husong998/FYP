@@ -264,9 +264,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   };
 
   struct relu : module {
-    typedef app::graphsum::Problem<GraphT> ProblemT;
-    typedef app::graphsum::Enactor<ProblemT> EnactorT;
-
     util::Array1D<SizeT, ValueT> a, a_grad;
     int len;
 
@@ -302,6 +299,48 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     }
   };
 
+  struct dropout : module {
+    Array mask, data, *grad;
+    ValueT p;
+    curandGenerator_t gen;
+    dropout(Array _data, Array *_grad, ValueT _p) : p(_p) {
+      data = _data;
+      grad = _grad;
+      if (grad) mask.Allocate(data.GetSize (), util::DEVICE);
+      curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
+    };
+    virtual void forward() override {
+      dofw();
+    }
+    virtual void backward() override {
+      dobw();
+    }
+   private:
+    cudaError_t dofw() {
+      auto retval = cudaSuccess;
+      curandGenerateUniformDouble(gen, mask.GetPointer(util::DEVICE), mask.GetSize ());
+      ValueT scale = 1 / (1 - p);
+      auto &p = this->p;
+      GUARD_CU (mask.ForEach (data,
+          [p, scale]__host__ __device__(ValueT &x, ValueT &d) {
+            d *= x > p ? scale : 0;
+          }
+          ))
+      return retval;
+    }
+
+    cudaError_t dobw() {
+      auto retval = cudaSuccess;
+      if (!grad) return retval;
+      ValueT scale = 1 / (1 - p);
+      auto &p = this->p;
+      GUARD_CU (mask.ForEach (*grad,
+          [p]__host__ __device__(ValueT &x, ValueT &g) {
+        g *= x > p ? scale : 0;
+      }))
+    }
+  };
+
   /**
    * @brief Data structure containing graphsum-specific data on indivual GPU.
    */
@@ -312,8 +351,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
     std::vector<module*> modules;
     std::vector<adam_var> vars;
-    util::Array<SizeT, int> truth;
-    Array w0, xw0, Axw0, Axw0w1, AAxw0w1, w1, loss;
+    util::Array<SizeT, int> truth, wrong, cnt;
+    Array penalty, w0, xw0, Axw0, Axw0w1, AAxw0w1, w1, loss;
     Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad;
 
     int in_dim, hid_dim, out_dim, num_nodes, max_iter;
@@ -323,6 +362,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      */
     DataSlice() : BaseDataSlice() {
       loss.SetName ("loss");
+      penalty.SetName ("penalty");
+      wrong.SetName ("wrong");
+      cnt.SetName ("cnt");
       truth.SetName ("truth");
       w0.SetName ("w0");
       w1.SetName ("w1");
@@ -336,6 +378,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       Axw0_grad.SetName ("Axw0_grad");
       Axw0w1_grad.SetName ("Axw0w1_grad");
       AAxw0w1_grad.SetName ("AAxw0w1_grad");
+      penalty.SetName("penalty");
     }
 
     /*
@@ -379,6 +422,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
 
+      GUARD_CU (penalty.Allocate (1))
+      GUARD_CU (wrong.Allocate (1))
+      GUARD_CU (cnt.Allocate (1))
       GUARD_CU (w0.Allocate (in_dim * hid_dim))
       GUARD_CU (w1.Allocate (hid_dim * out_dim))
       GUARD_CU (xw0.Allocate (num_nodes * hid_dim))
@@ -400,7 +446,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       curandGenerator_t gen;
       curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
-      curandGenerateUniformDouble(gen, w0.GetPointer(util::DEVICE), w0.GetSetted ());
+      curandGenerateUniformDouble(gen, w0.GetPointer(util::DEVICE), w0.GetSize ());
       ValueT range = sqrt (6.0 / (in_dim + hid_dim));
       GUARD_CU (w0.ForEach (
           [range]__host__ __device__(ValueT &x) {
@@ -415,9 +461,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
           }
       ))
 
+      modules.push_back(new dropout(x.edge_values, nullptr, 0.5));
       modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim));
       modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim));
       modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim));
+      modules.push_back(new dropout(Axw0, Axw0_grad, 0.5));
       modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, AAxw0w1, AAxw0w1_grad, num_nodes, hid_dim, out_dim));
       modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, loss, truth, num_nodes, out_dim))
 
@@ -633,7 +681,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @param[in] location Memory location to work on
    * \return cudaError_t Error message(s), if any
    */
-  cudaError_t Reset(const ValueT *in, util::Location target = util::DEVICE) {
+  cudaError_t Reset(util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
