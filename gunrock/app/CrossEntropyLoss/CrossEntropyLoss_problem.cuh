@@ -55,6 +55,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   typedef ProblemBase<GraphT, FLAG> BaseProblem;
   typedef DataSliceBase<GraphT, FLAG> BaseDataSlice;
 
+  typedef util::Array1D<SizeT, ValueT> Array;
   // Helper structures
 
   struct DataSlice : BaseDataSlice {
@@ -235,6 +236,25 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     return retval;
   }
 
+  cudaError_t Extract(ValueT *loss,
+                      util::Location target = util::DEVICE) {
+    cudaError_t retval = cudaSuccess;
+
+    if (this->num_gpus == 1) {
+      auto &data_slice = data_slices[0][0];
+
+      // Set device
+      if (target == util::DEVICE) {
+        GUARD_CU(util::SetDevice(this->gpu_idx[0]))
+
+        GUARD_CU(data_slice.loss.SetPointer(loss, 1, util::HOST))
+        GUARD_CU(data_slice.loss.Move(util::DEVICE, util::HOST))
+      }
+    }
+
+    return retval;
+  }
+
   /**
    * @brief      initialization function.
    *
@@ -266,6 +286,31 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
       GUARD_CU(data_slice.ground_truth.SetPointer(truth, num_nodes, util::HOST))
       GUARD_CU(data_slice.ground_truth.Move(util::HOST, util::DEVICE))
+//      data_slice.ground_truth.Print();
+    }  // end for (gpu)
+
+    return retval;
+  }
+
+  cudaError_t Init(GraphT &graph, const int num_nodes, const int num_classes, Array &logits,
+      util::Array1D<SizeT, int> &truth, bool training = 1, util::Location target = util::DEVICE) {
+    cudaError_t retval = cudaSuccess;
+    GUARD_CU(BaseProblem::Init(graph, target));
+    data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
+
+    for (int gpu = 0; gpu < this->num_gpus; gpu++) {
+      data_slices[gpu].SetName("data_slices[" + std::to_string(gpu) + "]");
+      if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+
+      GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
+
+      auto &data_slice = data_slices[gpu][0];
+      GUARD_CU(data_slice.Init(this->sub_graphs[gpu], num_nodes,
+        num_classes, training, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
+
+      data_slice.logits = logits;
+
+      data_slice.ground_truth = truth;
 //      data_slice.ground_truth.Print();
     }  // end for (gpu)
 

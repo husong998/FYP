@@ -7,7 +7,8 @@
 #add_subdirectory(sparseMatMul)
 #add_subdirectory(ReLU)
 #add_subdirectory(MatMul)
-add_subdirectory(CrossEntropyLoss)
+#add_subdirectory(CrossEntropyLoss)
+add_subdirectory(gcn)
 
 # end /* Add premitives' subdirectories */
 

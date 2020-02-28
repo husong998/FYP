@@ -82,6 +82,7 @@ struct CorssEntropyLoop
 
     util::Array1D<SizeT, ValueT> max_logits("max_logits");
     GUARD_CU(max_logits.Init(data_slice.num_nodes, util::DEVICE))
+//    GUARD_CU (ground_truth.Print())
     GUARD_CU(ground_truth.ForAll(logits, grad,
         [max_logits, num_clases, loss, training, count]__host__ __device__(int *truth,
             ValueT *d_logits, ValueT *grad, const SizeT &pos) {

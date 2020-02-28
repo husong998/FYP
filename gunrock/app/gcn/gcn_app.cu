@@ -50,24 +50,38 @@ cudaError_t UseParameters(util::Parameters &parameters) {
   GUARD_CU(UseParameters_enactor(parameters));
 
   GUARD_CU(parameters.Use<std::string>(
-      "in",
+      "feature_file",
       util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      "invalid",
+      "data/citeseer.svmlight",
       "input file name to feature matrix", __FILE__, __LINE__
       ));
 
-  GUARD_CU(parameters.Use<int>(
-      "dim",
+  GUARD_CU(parameters.Use<std::string>(
+      "split_file",
       util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      -1,
-      "feature vector dimension", __FILE__, __LINE__
+      "data/citeseer.split",
+      "split of nodes", __FILE__, __LINE__
       ));
 
   GUARD_CU(parameters.Use<std::string>(
-      "out",
-      util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      "out",
-      "output file name", __FILE__, __LINE__
+      "graph_file",
+      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      "data/citeseer.graph",
+      "split of nodes", __FILE__, __LINE__
+      ));
+
+  GUARD_CU(parameters.Use<int>(
+      "max_iter",
+      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      100,
+      "number of epochs to run", __FILE__, __LINE__
+      ));
+
+  GUARD_CU(parameters.Use<bool>(
+      "training",
+      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      1,
+      "whether to train the model", __FILE__, __LINE__
       ));
 
   return retval;
@@ -79,8 +93,7 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double gcn(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
-                    ValueT *in, ValueT *out) {
+double gcn(gunrock::util::Parameters &parameters, GraphT &graph) {
   typedef typename GraphT::VertexT VertexT;
   typedef gunrock::app::gcn::Problem<GraphT> ProblemT;
   typedef gunrock::app::gcn::Enactor<ProblemT> EnactorT;

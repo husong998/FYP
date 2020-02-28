@@ -506,7 +506,8 @@ class EnactorBase {
     //    }
     //}
 
-#pragma omp parallel for num_threads(num_gpus)
+    // TODO: DELETE THIS LINE
+//#pragma omp parallel for num_threads(num_gpus)
     for (int gpu = 0; gpu < num_gpus; gpu++) {
       auto &retval = enactor_slices[gpu * num_gpus].enactor_stats.retval;
       retval = util::SetDevice(gpu_idx[gpu]);

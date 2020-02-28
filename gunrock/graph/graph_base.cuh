@@ -241,6 +241,8 @@ cudaError_t GetHistogram(GraphT &graph, ArrayT &histogram,
   GUARD_CU(histogram.ForAll(
       [graph] __host__ __device__(CountT * counts, SizeT & v) {
         auto num_neighbors = graph.GetNeighborListLength(v);
+        // TODO: DELETE THIS LINE
+//        printf("num_neighbors: %d\n", num_neighbors);
         int log_length = 0;
         while (num_neighbors >= (1 << log_length)) {
           log_length++;

@@ -73,9 +73,10 @@ struct GraphsumIterationLoop
     auto &in = data_slice.input;
     auto &out = data_slice.output;
     auto &local_vertices = data_slice.local_vertices;
+    auto &forward = data_slice.forward;
 
     // The advance operation
-    auto advance_lambda =
+    auto forward_lambda =
         [in, out, graph, dim] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
@@ -87,15 +88,33 @@ struct GraphsumIterationLoop
         atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
       return true;
     };
-//    std::cerr << "iteration: " << iteration << "\n";
+    auto backward_lambda =
+        [in, out, graph, dim] __host__ __device__(
+            const VertexT &src, VertexT &dest, const SizeT &edge_id,
+            const VertexT &input_item, const SizeT &input_pos,
+            SizeT &output_pos) -> bool {
+      ValueT coef = (long long)graph.GetNeighborListLength(src) *
+          graph.GetNeighborListLength(dest);
+      coef = 1.0 / sqrt(coef);
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + src * dim + i, *(in + dest * dim + i) * coef);
+      return true;
+    };
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";
     auto null_ptr = &local_vertices;
     null_ptr = NULL;
-    GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
-        graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_lambda));
+    if (forward)
+      {
+        GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
+            graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
+            forward_lambda));
+      } else {
+        GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
+            graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
+            backward_lambda));
+      }
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;
@@ -187,6 +206,8 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
+    this->max_num_vertex_associates = 0;
+    this->max_num_value__associates = 1;
   }
 
   /**

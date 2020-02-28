@@ -54,6 +54,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   typedef ProblemBase<GraphT, FLAG> BaseProblem;
   typedef DataSliceBase<GraphT, FLAG> BaseDataSlice;
+  typedef util::Array1D<SizeT, ValueT> Array;
 
   // Helper structures
 
@@ -64,6 +65,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     util::Array1D<SizeT, ValueT> input, output;
     util::Array1D<SizeT, VertexT> local_vertices;
     int in_dim, out_dim;
+    bool forward;
 
     /*
      * @brief Default constructor
@@ -128,6 +130,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     cudaError_t Reset(util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
 
+//      std::cout << "nodes: " << this->sub_graph->nodes << ", dim: " << out_dim << '\n';
       // Ensure data are allocated
       GUARD_CU(output.EnsureSize_(
           this->sub_graph->nodes * this->out_dim, target));
@@ -254,6 +257,26 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     return retval;
   }
 
+  cudaError_t Init(GraphT &graph, const int in_dim, const int outdim,
+                   util::Location target = util::DEVICE) {
+    cudaError_t retval = cudaSuccess;
+    GUARD_CU(BaseProblem::Init(graph, target));
+    data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
+
+    for (int gpu = 0; gpu < this->num_gpus; gpu++) {
+        data_slices[gpu].SetName("data_slices[" + std::to_string(gpu) + "]");
+        if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+
+        GUARD_CU(data_slices[gpu].Allocate(1, target | util::HOST));
+
+        auto &data_slice = data_slices[gpu][0];
+        GUARD_CU(data_slice.Init(this->sub_graphs[gpu], in_dim, outdim, this->num_gpus,
+                                 this->gpu_idx[gpu], target, this->flag));
+    }  // end for (gpu)
+
+    return retval;
+  }
+
   /**
    * @brief Reset problem function. Must be called prior to each run.
    * @param[in] location Memory location to work on
@@ -266,6 +289,27 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
       GUARD_CU(data_slices[gpu]->Reset(target));
+      GUARD_CU(data_slices[gpu].Move(util::HOST, target));
+    }
+
+    if (target & util::DEVICE) {
+      GUARD_CU2(cudaDeviceSynchronize(), "cudaDeviceSynchronize failed");
+    }
+
+    return retval;
+  }
+
+  cudaError_t Reset(bool forward, Array &b, Array &c, util::Location target = util::DEVICE) {
+    cudaError_t retval = cudaSuccess;
+
+    for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
+      // Set device
+      if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+      data_slices[gpu][0].input = b;
+      data_slices[gpu][0].output = c;
+      data_slices[gpu][0].forward = forward;
+      GUARD_CU(data_slices[gpu]->Reset(target));
+//      std::cout << "d_pointer: " << data_slices[gpu].GetPointer(util::DEVICE) << '\n';
       GUARD_CU(data_slices[gpu].Move(util::HOST, target));
     }
 

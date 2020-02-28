@@ -75,30 +75,44 @@ struct GraphsumIterationLoop
     auto &out = data_slice.output;
     auto &local_vertices = data_slice.local_vertices;
     auto &weights = graph.CsrT::edge_values;
+    auto &forward = data_slice.forward;
 
     // The advance operation
-    auto advance_lambda =
+    auto forward_lambda =
         [in, out, graph, out_dim, weights] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-//      printf("src: %d, dest: %d, edge_id: %d, weight: %.2lf\n", src, dest, edge_id
-//      , weights[edge_id]);
       for (int i = 0; i < out_dim; i++) {
         atomicAdd(out + src * out_dim + i, weights[edge_id] * in[dest * out_dim + i]);
-//        printf("%.4lf ", out[src * out_dim + i]);
       }
       return true;
     };
-//    std::cerr << "iteration: " << iteration << "\n";
+    auto backward_lambda =
+        [in, out, graph, out_dim, weights] __host__ __device__(
+            const VertexT &i, VertexT &j, const SizeT &edge_id,
+            const VertexT &input_item, const SizeT &input_pos,
+            SizeT &output_pos) -> bool {
+      for (int k = 0; k < out_dim; k++) {
+        atomicAdd(out + j * out_dim + k, weights[edge_id] * in[i * out_dim + k]);
+      }
+      return true;
+    };
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
     oprtr_parameters.advance_mode = "ALL_EDGES";
     auto null_ptr = &local_vertices;
     null_ptr = NULL;
-    GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V>(
-        graph.csr(), &local_vertices, null_ptr, oprtr_parameters,
-        advance_lambda));
+    if (forward)
+      {
+        GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
+            graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
+            forward_lambda))
+      } else {
+        GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
+            graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
+            backward_lambda))
+    }
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;
@@ -190,6 +204,8 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
+    this->max_num_vertex_associates = 0;
+    this->max_num_value__associates = 1;
   }
 
   /**

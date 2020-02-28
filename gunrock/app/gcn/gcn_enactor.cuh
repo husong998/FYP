@@ -83,16 +83,17 @@ struct GCNIterationLoop
       m->forward();
     }
 
+    GUARD_CU (data_slice.Axw0.Print())
     if (training) {
       ValueT step_size = learning_rate * sqrt(1 - pow (beta2, iteration + 1)) / (1 - pow (beta1, iteration + 1));
       for (int i = modules.size() - 1; i >= 0; i--) {
         modules[i]->backward();
       }
       for (auto var : vars) {
-        auto &w = *var.weights, &g = *var.grads, &m = *var.m, &v = *var.v;
+        auto &w = var.weights, &g = var.grads, &m = var.m, &v = var.v;
         // TODO: step_size may need to be calculated on the fly
         GUARD_CU (w.ForAll(
-            [g, m, v, weight_decay, beta1, beta2, step_size, eps]__host__ __device__(ValueT &ws, SizeT &i) {
+            [g, m, v, weight_decay, beta1, beta2, step_size, eps]__host__ __device__(ValueT *ws, SizeT &i) {
               ValueT grad = g[i] + weight_decay * ws[i];
               m[i] = beta1 * m[i] + (1 - beta1) * grad;
               v[i] = beta2 * v[i] + (1 - beta2) * grad * grad;
@@ -107,32 +108,39 @@ struct GCNIterationLoop
             atomicAdd (penalty + 0, x * x);
           }
           ))
-      GUARD_CU (penalty +=
-          static_cast<decltype(modules.back())>(modules.back())->GetLoss())
-      GUARD_CU (penalty.Print())
+      GUARD_CU (penalty.ForEach([weight_decay]__host__ __device__(ValueT &x) {
+        x *= weight_decay / 2;
+      }))
+      ValueT loss;
+      GUARD_CU (penalty.SetPointer(&loss, 1, util::HOST))
+      GUARD_CU (penalty.Move(util::HOST, util::DEVICE))
+      loss += modules.back()->GetLoss();
+      std::cout << "loss: " << loss << ", ";
 
       GUARD_CU (cnt.ForEach([]__host__ __device__(int &x) { x = 0; }))
       GUARD_CU (wrong.ForEach([]__host__ __device__(int &x) { x = 0; }))
-      GUARD_CU (truth.ForAll(out, cnt,
-          [wrong]__host__ __device__(int *label, ValueT *logits, int *counter, SizeT &i) {
+//      GUARD_CU(truth.Print())
+      GUARD_CU (truth.ForAll(
+          [wrong, out_dim, cnt, out]__host__ __device__(int *label, SizeT &i) {
         if (label[i] < 0) return;
-        atomicAdd (counter, 1);
-        auto logit = logits + i * out_dim;
+        atomicAdd (cnt + 0, 1);
+        auto logit = out + i * out_dim;
         for (int j = 0; j < out_dim; j++) {
           if (logit[j] > logit[label[i]]) {
             atomicAdd (wrong + 0, 1);
             return;
           }
         }
-      }))
+      }, truth.GetSize(), util::DEVICE))
 
       int total, wrong_h;
-      GUARD_CU (cnt.SetPointer(&totol, 1, util::HOST))
+      GUARD_CU (cnt.SetPointer(&total, 1, util::HOST))
       GUARD_CU (wrong.SetPointer(&wrong_h, 1, util::HOST))
       GUARD_CU (cnt.Move(util::DEVICE, util::HOST))
       GUARD_CU (wrong.Move(util::DEVICE, util::HOST))
 
-      std::cout << "accuracy: " << wrong_h * 1.0 / total << '\n';
+      std::cout << "total: " << total << ", wrong: " << wrong_h <<
+      ",accuracy: " << (total - wrong_h) * 1.0 / total << '\n';
     }
     return retval;
   }
@@ -223,6 +231,8 @@ class Enactor
    * @brief graphsumEnactor constructor
    */
   Enactor() : BaseEnactor("sssp"), problem(NULL) {
+    this->max_num_vertex_associates = 0;
+    this->max_num_value__associates = 1;
   }
 
   /**
@@ -290,10 +300,7 @@ class Enactor
         auto &frontier =
             this->enactor_slices[gpu * this->num_gpus + peer_].frontier;
         // TODO: check whether the frontier is initialized properly
-        frontier.queue_length =
-            (peer_ != 0)
-            ? 0
-            : this->problem->data_slices[gpu]->local_vertices.GetSize();
+        frontier.queue_length = (peer_ != 0) ? 0 : 1;
         frontier.queue_index = 0;  // Work queue index
         frontier.queue_reset = true;
         this->enactor_slices[gpu * this->num_gpus + peer_]
