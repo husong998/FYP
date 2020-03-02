@@ -78,14 +78,31 @@ struct GCNIterationLoop
     auto &cnt = data_slice.cnt;
     auto &out_dim = data_slice.out_dim;
     auto &wrong = data_slice.wrong;
+    auto &label = data_slice.label;
+    auto &split = data_slice.split;
+    auto &in_feature = data_slice.in_feature;
+
+    GUARD_CU (data_slice.x_ptr->edge_values.ForEach(in_feature,
+        []__host__ __device__(ValueT &dst, ValueT &src) {
+      dst = src;
+    }, in_feature.GetSize(), util::DEVICE))
+
+    GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
+      t[i] = split[i] == 1 ? label[i] : -1;
+    }))
 
     for (auto m : modules) {
       m->forward();
     }
 
-    GUARD_CU (data_slice.Axw0.Print())
+//    GUARD_CU (data_slice..Print())
+
     if (training) {
       ValueT step_size = learning_rate * sqrt(1 - pow (beta2, iteration + 1)) / (1 - pow (beta1, iteration + 1));
+      double train_loss, train_acc, val_loss, val_acc;
+      std::pair<double, double> pair;
+      get_loss_acc(data_slice, pair);
+      std::tie(train_loss, train_acc) = pair;
       for (int i = modules.size() - 1; i >= 0; i--) {
         modules[i]->backward();
       }
@@ -101,47 +118,71 @@ struct GCNIterationLoop
             }
             ))
       }
-
-      GUARD_CU (penalty.ForEach([]__host__ __device__(ValueT &x) { x = 0; }))
-      GUARD_CU (w0.ForEach(
-          [penalty]__host__ __device__(ValueT &x) {
-            atomicAdd (penalty + 0, x * x);
-          }
-          ))
-      GUARD_CU (penalty.ForEach([weight_decay]__host__ __device__(ValueT &x) {
-        x *= weight_decay / 2;
+      GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
+        t[i] = split[i] == 2 ? label[i] : -1;
       }))
-      ValueT loss;
-      GUARD_CU (penalty.SetPointer(&loss, 1, util::HOST))
-      GUARD_CU (penalty.Move(util::HOST, util::DEVICE))
-      loss += modules.back()->GetLoss();
-      std::cout << "loss: " << loss << ", ";
-
-      GUARD_CU (cnt.ForEach([]__host__ __device__(int &x) { x = 0; }))
-      GUARD_CU (wrong.ForEach([]__host__ __device__(int &x) { x = 0; }))
-//      GUARD_CU(truth.Print())
-      GUARD_CU (truth.ForAll(
-          [wrong, out_dim, cnt, out]__host__ __device__(int *label, SizeT &i) {
-        if (label[i] < 0) return;
-        atomicAdd (cnt + 0, 1);
-        auto logit = out + i * out_dim;
-        for (int j = 0; j < out_dim; j++) {
-          if (logit[j] > logit[label[i]]) {
-            atomicAdd (wrong + 0, 1);
-            return;
-          }
-        }
-      }, truth.GetSize(), util::DEVICE))
-
-      int total, wrong_h;
-      GUARD_CU (cnt.SetPointer(&total, 1, util::HOST))
-      GUARD_CU (wrong.SetPointer(&wrong_h, 1, util::HOST))
-      GUARD_CU (cnt.Move(util::DEVICE, util::HOST))
-      GUARD_CU (wrong.Move(util::DEVICE, util::HOST))
-
-      std::cout << "total: " << total << ", wrong: " << wrong_h <<
-      ",accuracy: " << (total - wrong_h) * 1.0 / total << '\n';
+      for (auto m : modules) {
+        m->forward();
+      }
+      get_loss_acc(data_slice, pair);
+      std::tie(val_loss, val_acc) = pair;
+      printf("train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf\n",
+          train_loss, train_acc, val_loss, val_acc);
     }
+    return retval;
+  }
+
+  template <typename T>
+  cudaError_t get_loss_acc(T &data_slice, std::pair<double, double> &res) {
+    auto retval = cudaSuccess;
+    auto &penalty = data_slice.penalty;
+    auto &weight_decay = data_slice.weight_decay;
+    auto &wrong = data_slice.wrong;
+    auto &out_dim = data_slice.out_dim;
+    auto &cnt = data_slice.cnt;
+    auto &out = data_slice.AAxw0w1;
+    auto &w0 = data_slice.w0;
+    auto &truth = data_slice.truth;
+    auto &modules = data_slice.modules;
+
+    GUARD_CU (penalty.ForEach([]__host__ __device__(ValueT &x) { x = 0; }))
+    GUARD_CU (w0.ForEach(
+              [penalty]__host__ __device__(ValueT &x) {
+      atomicAdd (penalty + 0, x * x);
+    }))
+    GUARD_CU (penalty.ForEach([weight_decay]__host__ __device__(ValueT &x) {
+      x *= weight_decay / 2;
+    }))
+//      GUARD_CU(penalty.Print())
+    ValueT loss;
+    GUARD_CU (penalty.SetPointer(&loss, 1, util::HOST))
+    GUARD_CU (penalty.Move(util::DEVICE, util::HOST))
+    loss += modules.back()->GetLoss();
+//      std::cout << "loss: " << modules.back()->GetLoss() << ", ";
+
+    GUARD_CU (cnt.ForEach([]__host__ __device__(int &x) { x = 0; }))
+    GUARD_CU (wrong.ForEach([]__host__ __device__(int &x) { x = 0; }))
+//      GUARD_CU(truth.Print())
+    GUARD_CU (truth.ForAll(
+        [wrong, out_dim, cnt, out]__host__ __device__(int *label, SizeT &i) {
+      if (label[i] < 0) return;
+      atomicAdd (cnt + 0, 1);
+      auto logit = out + i * out_dim;
+      for (int j = 0; j < out_dim; j++) {
+          if (logit[j] > logit[label[i]]) {
+              atomicAdd (wrong + 0, 1);
+              return;
+            }
+        }
+    }, truth.GetSize(), util::DEVICE))
+
+    int total, wrong_h;
+    GUARD_CU (cnt.SetPointer(&total, 1, util::HOST))
+    GUARD_CU (wrong.SetPointer(&wrong_h, 1, util::HOST))
+    GUARD_CU (cnt.Move(util::DEVICE, util::HOST))
+    GUARD_CU (wrong.Move(util::DEVICE, util::HOST))
+    ValueT acc = (total - wrong_h) * 1.0 / total;
+    res = std::make_pair(loss, acc);
     return retval;
   }
 

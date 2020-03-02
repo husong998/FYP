@@ -152,14 +152,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(loss.ForEach(
           []__host__ __device__(ValueT &x) {
             x = 0;
-          }
+          }, loss.GetSize(), util::DEVICE
       ))
 
       if (training) {
         GUARD_CU(grad.ForEach(
             []__host__ __device__(ValueT &x) {
               x = 0;
-            }
+            }, grad.GetSize(), util::DEVICE
         ))
       }
       return retval;
@@ -292,7 +292,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     return retval;
   }
 
-  cudaError_t Init(GraphT &graph, const int num_nodes, const int num_classes, Array &logits,
+  cudaError_t Init(GraphT &graph, const int num_nodes, const int num_classes, Array &logits, Array &_grad,
       util::Array1D<SizeT, int> &truth, bool training = 1, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(BaseProblem::Init(graph, target));
@@ -309,8 +309,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         num_classes, training, this->num_gpus, this->gpu_idx[gpu], target, this->flag))
 
       data_slice.logits = logits;
-
       data_slice.ground_truth = truth;
+      data_slice.grad = _grad;
+
+      GUARD_CU(data_slices[gpu].Move(util::HOST, target));
 //      data_slice.ground_truth.Print();
     }  // end for (gpu)
 
@@ -329,7 +331,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
       GUARD_CU(data_slices[gpu]->Reset(target));
-      GUARD_CU(data_slices[gpu].Move(util::HOST, target));
     }
 
     if (target & util::DEVICE) {

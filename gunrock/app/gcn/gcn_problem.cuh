@@ -172,20 +172,20 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     typedef app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
 
     GraphT dummy;
-    util::Array1D<SizeT, ValueT> logits, grad, loss;
+    util::Array1D<SizeT, ValueT> logits, grad;
     util::Array1D<SizeT, int> truth;
     ProblemT *problem;
     EnactorT *enactor;
     int dim;
 
-    cross_entropy(Parameters &p, Array _logits, Array _grad, Array _loss,
+    cross_entropy(Parameters &p, Array _logits, Array _grad,
                   util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes,
                   bool training=true) :
-        logits(_logits), grad(_grad), loss(_loss), truth(_truth) {
+        logits(_logits), grad(_grad), truth(_truth) {
       problem = new ProblemT(p);
       enactor = new EnactorT();
 
-      problem->Init(dummy, num_nodes, num_classes, logits, truth, training);
+      problem->Init(dummy, num_nodes, num_classes, logits, grad, truth, training);
       enactor->Init(*problem);
     }
 
@@ -200,6 +200,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     virtual double GetLoss() override {
       double loss;
       problem->Extract (&loss);
+      return loss;
     }
   };
 
@@ -265,21 +266,21 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       )
       )
 
-      auto &b = this->b_grad, &c = this->c_grad;
+      auto &b_grad = this->b_grad, &c_grad = this->c_grad, &b = this->b, &a = this->a;
       auto &p = this->p, &n = this->n;
       // Calculating matrix multiplication
       GUARD_CU(a_grad.ForAll(
-          [b, c, p, n]__host__ __device__(ValueT *a_, const SizeT pos) {
+          [b_grad, c_grad, p, n, a, b]__host__ __device__(ValueT *a_, const SizeT pos) {
         int i = pos / n, j = pos % n;
         ValueT tmp = 0;
         for (int k = 0; k < p; k++) {
-          tmp += c[i * p + k] * b[j * p + k];
-          atomicAdd(b + j * p + k, a_[pos] * c[i * p + k]);
+          tmp += c_grad[i * p + k] * b[j * p + k];
+          atomicAdd(b_grad + j * p + k, a[pos] * c_grad[i * p + k]);
 //          printf("c[%d], b[%d], a[%d]\n", i * p + k, j * p + k, pos);
         }
         a_[i * n + j] = tmp;
-      }, m * n, util::DEVICE
-               ));
+      }, m * n, util::DEVICE));
+//      b_grad.Print();
 
       return retval;
     }
@@ -343,7 +344,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       auto &p = this->p;
       GUARD_CU (mask.ForEach (data,
           [p, scale]__host__ __device__(ValueT &x, ValueT &d) {
-            d *= x > p ? scale : 0;
+            d *= x >= p ? scale : 0;
           }
           ))
       return retval;
@@ -356,7 +357,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       auto &p = this->p;
       GUARD_CU (mask.ForEach (*grad,
           [p, scale]__host__ __device__(ValueT &x, ValueT &g) {
-        g *= x > p ? scale : 0;
+        g *= x >= p ? scale : 0;
       }))
     }
   };
@@ -371,9 +372,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
     std::vector<module*> modules;
     std::vector<adam_var> vars;
-    util::Array1D<SizeT, int> truth, wrong, cnt;
-    Array penalty, w0, xw0, Axw0, Axw0w1, AAxw0w1, w1, loss;
-    Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad;
+    util::Array1D<SizeT, int> truth, wrong, cnt, label, split;
+    Array penalty, w0, xw0, Axw0, Axw0w1, AAxw0w1, w1;
+    Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad, in_feature;
+    SpmatT *x_ptr;
 
     int in_dim, hid_dim, out_dim, num_nodes, max_iter;
     bool training;
@@ -381,7 +383,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @brief Default constructor
      */
     DataSlice() : BaseDataSlice() {
-      loss.SetName ("loss");
+//      loss.SetName ("loss");
+      split.SetName ("split");
+      in_feature.SetName ("in_feature");
+      label.SetName ("label");
       penalty.SetName ("penalty");
       wrong.SetName ("wrong");
       cnt.SetName ("cnt");
@@ -439,11 +444,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       this->max_iter = parameters.Get<int>("max_iter");
       this->training = parameters.Get<bool>("training");
       this->num_nodes = sub_graph.nodes;
+      this->x_ptr = &x;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
 
+      GUARD_CU (in_feature.Allocate (x.edges))
       GUARD_CU (penalty.Allocate (1))
       GUARD_CU (wrong.Allocate (1))
+      GUARD_CU (cnt.Allocate (1))
+      GUARD_CU (label.Allocate (num_nodes))
+      GUARD_CU (truth.Allocate (num_nodes))
+      GUARD_CU (split.Allocate (num_nodes))
       GUARD_CU (cnt.Allocate (1))
       GUARD_CU (w0.Allocate (in_dim * hid_dim))
       GUARD_CU (w1.Allocate (hid_dim * out_dim))
@@ -458,10 +469,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU (Axw0w1_grad.Allocate (num_nodes * out_dim))
       GUARD_CU (AAxw0w1_grad.Allocate (num_nodes * out_dim))
 
-      GUARD_CU (loss.ForEach([]__host__ __device__(ValueT &x) { x = 0; }))
-
-      GUARD_CU (truth.SetPointer(_truth, num_nodes, util::HOST))
-      GUARD_CU (truth.Move(util::HOST, util::DEVICE))
+      GUARD_CU (label.SetPointer(_truth, num_nodes, util::HOST))
+      GUARD_CU (label.Move(util::HOST, util::DEVICE))
 //      GUARD_CU (truth.Print ())
 
       curandGenerator_t gen;
@@ -489,7 +498,12 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5));
       modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim));
       modules.push_back(new graph_sum(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim));
-      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, loss, truth, num_nodes, out_dim));
+      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim));
+
+      GUARD_CU(x.edge_values.ForEach(in_feature,
+          []__host__ __device__(ValueT &src, ValueT &dst) {
+        dst = src;
+      }, x.edge_values.GetSize(), util::DEVICE))
 
       vars.emplace_back(w0, w0_grad);
       vars.emplace_back(w1, w1_grad);
@@ -633,6 +647,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 //    std::cout << "n_rows: " << n_rows << '\n';
     g.edges = nnz;
     gunrock::graphio::LoadGraph(p, g);
+//    g.Move(util::HOST, util::DEVICE);
 
 //    for (auto e : labels) std::cout << e << ' '; std::cout << '\n';
     truth = labels.data();
@@ -640,17 +655,15 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     return retval;
   }
 
-  void split(Parameters &p, int *truth, int split_id = 1) {
+  void get_split(Parameters &p, std::vector<int> &split) {
     std::ifstream split_file(p.Get<std::string>("split_file"));
-    int node_id = 0;
 
     while (true) {
       std::string line;
       getline(split_file, line);
       if (split_file.eof()) break;
       int cur_split = stoi(line);
-      if (cur_split != split_id) truth[node_id] = -1;
-      ++node_id;
+      split.push_back(cur_split);
     }
   }
 
@@ -680,10 +693,12 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       read_feature (BaseProblem::parameters, in, _truth);
 //      for (int i = 0; i < graph.nodes; i++) std::cout << _truth[i] << ' ';
 //      std::cout << '\n';
-      split(BaseProblem::parameters, _truth);
+      std::vector<int> split;
+      get_split(BaseProblem::parameters, split);
       data_slice.Init(this->sub_graphs[gpu], BaseProblem::parameters, in, _truth, this->num_gpus,
                                this->gpu_idx[gpu], target, this->flag);
-//      GUARD_CU (data_slice.w0.Print())
+      GUARD_CU (data_slice.split.SetPointer(split.data (), graph.nodes, util::HOST))
+      GUARD_CU (data_slice.split.Move(util::HOST, util::DEVICE))
     }  // end for (gpu)
 
     return retval;

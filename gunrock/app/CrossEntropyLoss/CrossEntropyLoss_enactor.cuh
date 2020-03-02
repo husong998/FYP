@@ -135,6 +135,8 @@ struct CorssEntropyLoop
       ))
     }
 
+//    GUARD_CU(loss.Print())
+
 //    grad.Print();
     return retval;
   }
