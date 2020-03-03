@@ -291,7 +291,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     int len;
 
     relu(util::Array1D<SizeT, ValueT> &_a, util::Array1D<SizeT, ValueT> &_a_grad, int _len) :
-        a(_a), len(_len) {};
+        a(_a), a_grad(_a_grad), len(_len) {};
 
     virtual void forward() override {
       dofw();
