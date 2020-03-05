@@ -148,7 +148,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
           [] __host__ __device__(ValueT &x) {
             x = 0;
           },
-          nodes, target, this->stream));
+          output.GetSize (), target, this->stream));
 
       return retval;
     }
