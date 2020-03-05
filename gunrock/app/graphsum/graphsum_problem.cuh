@@ -210,7 +210,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         GUARD_CU(util::SetDevice(this->gpu_idx[0]));
 
         GUARD_CU(
-            data_slice.output.SetPointer(out, nodes, util::HOST));
+            data_slice.output.SetPointer(out, data_slice.output.GetSize(), util::HOST));
         GUARD_CU(data_slice.output.Move(util::DEVICE, util::HOST));
       }
     }
