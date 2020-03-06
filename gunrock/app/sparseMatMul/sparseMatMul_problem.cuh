@@ -132,8 +132,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
 //      std::cout << "nodes: " << this->sub_graph->nodes << ", dim: " << out_dim << '\n';
       // Ensure data are allocated
-      GUARD_CU(output.EnsureSize_(
-          this->sub_graph->nodes * this->out_dim, target));
+//      GUARD_CU(output.EnsureSize_(
+//          this->sub_graph->nodes * this->out_dim, target));
 
       // Initizlize local vertices
       GUARD_CU(local_vertices.ForAll(
@@ -145,7 +145,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU(output.ForEach(
           [] __host__ __device__(ValueT &x) {
             x = 0;
-          }, this->sub_graph->nodes * this->out_dim, target, this->stream));
+          }, output.GetSize (), target, this->stream));
 
       return retval;
     }
