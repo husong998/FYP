@@ -91,7 +91,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   struct adam_var {
     Array weights, grads, m, v;
-    adam_var(Array &_w, Array &_g) : weights(_w), grads(_g) {
+    bool decay;
+    adam_var(Array &_w, Array &_g, bool _d) : decay(_d), weights(_w), grads(_g) {
       init();
     }
     cudaError_t init() {
@@ -526,8 +527,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         dst = src;
       }, x.edge_values.GetSize(), util::DEVICE))
 
-      vars.emplace_back(w0, w0_grad);
-      vars.emplace_back(w1, w1_grad);
+      vars.emplace_back(w0, w0_grad, true);
+      vars.emplace_back(w1, w1_grad, false);
 
       GUARD_CU(sub_graph.Move(util::HOST, target, this->stream));
       return retval;

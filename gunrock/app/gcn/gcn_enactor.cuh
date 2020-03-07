@@ -108,10 +108,12 @@ struct GCNIterationLoop
       }
       for (auto var : vars) {
         auto &w = var.weights, &g = var.grads, &m = var.m, &v = var.v;
+        auto &decay = var.decay;
         // TODO: step_size may need to be calculated on the fly
         GUARD_CU (w.ForAll(
-            [g, m, v, weight_decay, beta1, beta2, step_size, eps]__host__ __device__(ValueT *ws, SizeT &i) {
-              ValueT grad = g[i] + weight_decay * ws[i];
+            [decay, g, m, v, weight_decay, beta1, beta2, step_size, eps]__host__ __device__(ValueT *ws, SizeT &i) {
+              ValueT grad = g[i];
+              if (decay) grad += weight_decay * ws[i];
               m[i] = beta1 * m[i] + (1 - beta1) * grad;
               v[i] = beta2 * v[i] + (1 - beta2) * grad * grad;
               ws[i] -= step_size * m[i] / (sqrt(v[i]) + eps);
