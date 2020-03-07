@@ -43,12 +43,16 @@ cudaError_t UseParameters_problem(util::Parameters &parameters) {
       util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
       16, "input_dimension", __FILE__, __LINE__))
 
+  GUARD_CU(parameters.Use<double>("learning_rate",
+      util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
+      0.005, "learning rate", __FILE__, __LINE__))
+
   return retval;
 }
 
 struct module {
   virtual ~module() = default;
-  virtual void forward() = 0;
+  virtual void forward(bool) = 0;
   virtual void backward() = 0;
   virtual double GetLoss() {
     return 0;
@@ -121,7 +125,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Init(*problem);
     }
 
-    virtual void forward() override {
+    virtual void forward(bool train) override {
       problem->Reset(1, b, c);
       enactor->Reset();
       enactor->Enact();
@@ -154,7 +158,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Init(*problem);
     }
 
-    virtual void forward() override {
+    virtual void forward(bool train) override {
       problem->Reset(1, b, c);
       enactor->Reset();
       enactor->Enact();
@@ -189,8 +193,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Init(*problem);
     }
 
-    virtual void forward() override {
-      problem->Reset();
+    virtual void forward(bool train) override {
+      problem->Reset(train);
       enactor->Reset();
       enactor->Enact();
     }
@@ -218,7 +222,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
             util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _m, int _n, int _p) :
         a(_a), b(_b), c(_c), a_grad(_a_grad), b_grad(_b_grad), c_grad(_c_grad), m(_m), n(_n), p(_p) {}
 
-    virtual void forward() override {
+    virtual void forward(bool train) override {
       dofw();
     }
 
@@ -245,8 +249,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
           atomicAdd(c + i * p + k, a_[pos] * b[j * p + k]);
           //            printf("i: %d\n", i * p + k);
         }
-      }, m * n, util::DEVICE
-               ));
+      }, m * n, util::DEVICE));
 
       return retval;
     }
@@ -288,23 +291,38 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 
   struct relu : module {
     util::Array1D<SizeT, ValueT> a, a_grad;
+    util::Array1D<SizeT, bool> keep;
     int len;
 
     relu(util::Array1D<SizeT, ValueT> &_a, util::Array1D<SizeT, ValueT> &_a_grad, int _len) :
-        a(_a), a_grad(_a_grad), len(_len) {};
+        a(_a), a_grad(_a_grad), len(_len) {
+      keep.Allocate (a.GetSize (), util::DEVICE);
+    };
 
-    virtual void forward() override {
-      dofw();
+    virtual void forward(bool train) override {
+      dofw(train);
     }
 
     virtual void backward() override {
       dobw();
     }
 
-    cudaError_t dofw() {
+    cudaError_t dofw(bool train) {
       cudaError_t retval = cudaSuccess;
 
-      GUARD_CU(a.ForEach([]__host__ __device__(ValueT &x) { x = max(x, 0.0); }))
+      GUARD_CU(a.ForEach(keep,
+          [train]__host__ __device__(ValueT &x, bool &k) {
+          if (train) k = x > 0;
+          if (!k) x = 0;
+        }, a.GetSize (), util::DEVICE))
+      ValueT res[a.GetSize ()];
+      GUARD_CU (a.SetPointer (res, a.GetSize (), util::HOST))
+      GUARD_CU (a.Move(util::DEVICE, util::HOST))
+      std::ofstream out("relu_forward");
+      out.precision(4);
+      out << std::fixed;
+      for (auto i = 0; i < a.GetSize (); i++) out << res[i] << '\n';
+      a.UnSetPointer (util::HOST);
 
       return retval;
     }
@@ -312,10 +330,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     cudaError_t dobw() {
       cudaError_t retval = cudaSuccess;
 
-      GUARD_CU(a_grad.ForEach(a,
-          []__host__ __device__(ValueT &grad, ValueT &x) {
-        if (x == 0) grad = 0;
-      }))
+      GUARD_CU(a_grad.ForEach(keep,
+          []__host__ __device__(ValueT &grad, bool &k) {
+        if (!k) grad = 0;
+      }, a_grad.GetSize (), util::DEVICE))
 
       return retval;
     }
@@ -331,8 +349,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       if (grad) mask.Allocate(data.GetSize (), util::DEVICE);
       curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
     };
-    virtual void forward() override {
-      dofw();
+    virtual void forward(bool train) override {
+      if (train) dofw();
     }
     virtual void backward() override {
       dobw();
@@ -443,6 +461,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       this->out_dim = parameters.Get<int>("out_dim");
       this->max_iter = parameters.Get<int>("max_iter");
       this->training = parameters.Get<bool>("training");
+      this->learning_rate = parameters.Get<double>("learning_rate");
       this->num_nodes = sub_graph.nodes;
       this->x_ptr = &x;
 
@@ -476,6 +495,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       curandGenerator_t gen;
       curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
       curandGenerateUniformDouble(gen, w0.GetPointer(util::DEVICE), w0.GetSize ());
+
       ValueT range = sqrt (6.0 / (in_dim + hid_dim));
       GUARD_CU (w0.ForEach (
           [range]__host__ __device__(ValueT &x) {
@@ -483,6 +503,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
           }
       ))
       curandGenerateUniformDouble(gen, w1.GetPointer(util::DEVICE), w1.GetSetted ());
+
       range = sqrt (6.0 / (out_dim + hid_dim));
       GUARD_CU (w1.ForEach (
           [range]__host__ __device__(ValueT &x) {
@@ -649,7 +670,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     gunrock::graphio::LoadGraph(p, g);
 //    g.Move(util::HOST, util::DEVICE);
 
-//    for (auto e : labels) std::cout << e << ' '; std::cout << '\n';
+//    for (auto e : labels) std::cout << e << '\n'; std::cout << '\n';
     truth = labels.data();
 
     return retval;
@@ -691,7 +712,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       auto &data_slice = data_slices[gpu][0];
 
       read_feature (BaseProblem::parameters, in, _truth);
-//      for (int i = 0; i < graph.nodes; i++) std::cout << _truth[i] << ' ';
+//      for (int i = 0; i < graph.nodes; i++) std::cout << _truth[i] << '\n';
 //      std::cout << '\n';
       std::vector<int> split;
       get_split(BaseProblem::parameters, split);

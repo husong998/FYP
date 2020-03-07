@@ -140,8 +140,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
      * @param[in] target      Targeting device location
      * \return    cudaError_t Error message(s), if any
      */
-    cudaError_t Reset(util::Location target = util::DEVICE) {
+    cudaError_t Reset(bool train, util::Location target = util::DEVICE) {
       cudaError_t retval = cudaSuccess;
+
+      this->training = train;
 
 //      GUARD_CU(ground_truth.ForEach(
 //          []__host__ __device__(int &x) {
@@ -324,13 +326,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
    * @param[in] location Memory location to work on
    * \return cudaError_t Error message(s), if any
    */
-  cudaError_t Reset(util::Location target = util::DEVICE) {
+  cudaError_t Reset(bool train, util::Location target = util::DEVICE) {
     cudaError_t retval = cudaSuccess;
 
     for (int gpu = 0; gpu < this->num_gpus; ++gpu) {
       // Set device
       if (target & util::DEVICE) GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-      GUARD_CU(data_slices[gpu]->Reset(target));
+      GUARD_CU(data_slices[gpu]->Reset(train, target));
     }
 
     if (target & util::DEVICE) {

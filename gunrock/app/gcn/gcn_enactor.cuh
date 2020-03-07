@@ -92,7 +92,7 @@ struct GCNIterationLoop
     }))
 
     for (auto m : modules) {
-      m->forward();
+      m->forward(true);
     }
 
 //    GUARD_CU (data_slice..Print())
@@ -115,19 +115,28 @@ struct GCNIterationLoop
               m[i] = beta1 * m[i] + (1 - beta1) * grad;
               v[i] = beta2 * v[i] + (1 - beta2) * grad * grad;
               ws[i] -= step_size * m[i] / (sqrt(v[i]) + eps);
-            }
-            ))
+        }))
+//        w.Print("w: ", 10, util::DEVICE);
+//        g.Print("g: ", 10, util::DEVICE);
+//        m.Print("m: ", 10, util::DEVICE);
+//        v.Print("v: ", 10, util::DEVICE);
       }
+
+      GUARD_CU (data_slice.x_ptr->edge_values.ForEach(in_feature,
+          []__host__ __device__(ValueT &dst, ValueT &src) {
+        dst = src;
+      }, in_feature.GetSize(), util::DEVICE))
+
       GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
         t[i] = split[i] == 2 ? label[i] : -1;
       }))
       for (auto m : modules) {
-        m->forward();
+        m->forward(false);
       }
       get_loss_acc(data_slice, pair);
       std::tie(val_loss, val_acc) = pair;
-      printf("train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf\n",
-          train_loss, train_acc, val_loss, val_acc);
+      printf("epoch: %d, train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf\n",
+          iteration + 1, train_loss, train_acc, val_loss, val_acc);
     }
     return retval;
   }
