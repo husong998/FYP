@@ -343,12 +343,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
   struct dropout : module {
     Array mask, data, *grad;
     ValueT p;
-    curandGenerator_t gen;
-    dropout(Array _data, Array *_grad, ValueT _p) : p(_p) {
+    curandGenerator_t *gen;
+    dropout(Array _data, Array *_grad, ValueT _p, curandGenerator_t *_gen) : p(_p), gen(_gen) {
       data = _data;
       grad = _grad;
-      if (grad) mask.Allocate(data.GetSize (), util::DEVICE);
-      curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
+      mask.Allocate(data.GetSize (), util::DEVICE);
     };
     virtual void forward(bool train) override {
       if (train) dofw();
@@ -358,14 +357,27 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     }
     cudaError_t dofw() {
       auto retval = cudaSuccess;
-      curandGenerateUniformDouble(gen, mask.GetPointer(util::DEVICE), mask.GetSize ());
+      curandGenerateUniformDouble(*gen, mask.GetPointer(util::DEVICE), mask.GetSize ());
+//      mask.Print ("dropout_mask: ", 10, util::DEVICE);
+//      SizeT len = mask.GetSize ();
+//      GUARD_CU (mask.ForAll([len]__host__ __device__(ValueT *x, SizeT &i) {
+//        if (i & 1) x[i] = 0.0;
+//        else x[i] = 1.0;
+//      }))
+      ValueT tmp[data.GetSize ()];
+      std::mt19937 rng(std::time (nullptr));
+      for (int i = 0; i < data.GetSize (); i++) tmp[i] = rng() * 1.0 / rng.max ();
+      mask.SetPointer (tmp, mask.GetSize (), util::HOST);
+      mask.Move(util::HOST, util::DEVICE);
+      mask.UnSetPointer (util::HOST);
+
       ValueT scale = 1 / (1 - p);
       auto &p = this->p;
       GUARD_CU (mask.ForEach (data,
           [p, scale]__host__ __device__(ValueT &x, ValueT &d) {
             d *= x >= p ? scale : 0;
-          }
-          ))
+          }, mask.GetSize (), util::DEVICE))
+//      data.Print ("dropout_data: ", 10, util::DEVICE);
       return retval;
     }
 
@@ -393,8 +405,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     std::vector<adam_var> vars;
     util::Array1D<SizeT, int> truth, wrong, cnt, label, split;
     Array penalty, w0, xw0, Axw0, Axw0w1, AAxw0w1, w1;
-    Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad, in_feature;
-    SpmatT *x_ptr;
+    Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad, in_feature, x_val;
+    curandGenerator_t gen;
 
     int in_dim, hid_dim, out_dim, num_nodes, max_iter;
     bool training;
@@ -464,7 +476,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       this->training = parameters.Get<bool>("training");
       this->learning_rate = parameters.Get<double>("learning_rate");
       this->num_nodes = sub_graph.nodes;
-      this->x_ptr = &x;
+//      this->x_ptr = &x;
 
       GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
 
@@ -493,8 +505,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       GUARD_CU (label.Move(util::HOST, util::DEVICE))
 //      GUARD_CU (truth.Print ())
 
-      curandGenerator_t gen;
-      curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_DEFAULT);
+
+      curandCreateGenerator (&gen, CURAND_RNG_PSEUDO_XORWOW);
       curandGenerateUniformDouble(gen, w0.GetPointer(util::DEVICE), w0.GetSize ());
 
       ValueT range = sqrt (6.0 / (in_dim + hid_dim));
@@ -513,14 +525,18 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       ))
 
       Array *dummy = nullptr;
-      modules.push_back(new dropout(x.edge_values, dummy, 0.5));
+      modules.push_back(new dropout(x.edge_values, dummy, 0.5, &gen));
       modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim));
       modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim));
       modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim));
-      modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5));
+      modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5, &gen));
       modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim));
       modules.push_back(new graph_sum(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim));
       modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim));
+
+      x_val = static_cast<sprmul *>(modules[1])->problem->
+          data_slices[0][0].sub_graph[0].SpmatT::CsrT::edge_values;
+      static_cast<dropout*>(modules[0])->data = x_val;
 
       GUARD_CU(x.edge_values.ForEach(in_feature,
           []__host__ __device__(ValueT &src, ValueT &dst) {

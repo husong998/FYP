@@ -82,7 +82,7 @@ struct GCNIterationLoop
     auto &split = data_slice.split;
     auto &in_feature = data_slice.in_feature;
 
-    GUARD_CU (data_slice.x_ptr->edge_values.ForEach(in_feature,
+    GUARD_CU (data_slice.x_val.ForEach(in_feature,
         []__host__ __device__(ValueT &dst, ValueT &src) {
       dst = src;
     }, in_feature.GetSize(), util::DEVICE))
@@ -124,7 +124,7 @@ struct GCNIterationLoop
 //        v.Print("v: ", 10, util::DEVICE);
       }
 
-      GUARD_CU (data_slice.x_ptr->edge_values.ForEach(in_feature,
+      GUARD_CU (data_slice.x_val.ForEach(in_feature,
           []__host__ __device__(ValueT &dst, ValueT &src) {
         dst = src;
       }, in_feature.GetSize(), util::DEVICE))
