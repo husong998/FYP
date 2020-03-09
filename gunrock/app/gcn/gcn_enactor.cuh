@@ -97,10 +97,11 @@ struct GCNIterationLoop
 
 //    GUARD_CU (data_slice..Print())
 
+    std::pair<double, double> pair;
+
     if (training) {
       ValueT step_size = learning_rate * sqrt(1 - pow (beta2, iteration + 1)) / (1 - pow (beta1, iteration + 1));
       double train_loss, train_acc, val_loss, val_acc;
-      std::pair<double, double> pair;
       get_loss_acc(data_slice, pair);
       std::tie(train_loss, train_acc) = pair;
       for (int i = modules.size() - 1; i >= 0; i--) {
@@ -139,6 +140,22 @@ struct GCNIterationLoop
       std::tie(val_loss, val_acc) = pair;
       printf("epoch: %d, train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf\n",
           iteration + 1, train_loss, train_acc, val_loss, val_acc);
+    }
+
+    if (iteration == data_slice.max_iter - 1) {
+        GUARD_CU (data_slice.x_val.ForEach(in_feature,
+            []__host__ __device__(ValueT &dst, ValueT &src) {
+          dst = src;
+        }, in_feature.GetSize(), util::DEVICE))
+        GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
+          t[i] = split[i] == 1 ? label[i] : -1;
+        }))
+
+        for (auto m : modules) {
+          m->forward(false);
+        }
+        get_loss_acc(data_slice, pair);
+        printf("test_loss: %lf, test_acc: %lf\n", pair.first, pair.second);
     }
     return retval;
   }

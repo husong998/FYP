@@ -364,12 +364,12 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
 //        if (i & 1) x[i] = 0.0;
 //        else x[i] = 1.0;
 //      }))
-      ValueT tmp[data.GetSize ()];
-      std::mt19937 rng(std::time (nullptr));
-      for (int i = 0; i < data.GetSize (); i++) tmp[i] = rng() * 1.0 / rng.max ();
-      mask.SetPointer (tmp, mask.GetSize (), util::HOST);
-      mask.Move(util::HOST, util::DEVICE);
-      mask.UnSetPointer (util::HOST);
+//      ValueT tmp[data.GetSize ()];
+//      std::mt19937 rng(std::time (nullptr));
+//      for (int i = 0; i < data.GetSize (); i++) tmp[i] = rng() * 1.0 / rng.max ();
+//      mask.SetPointer (tmp, mask.GetSize (), util::HOST);
+//      mask.Move(util::HOST, util::DEVICE);
+//      mask.UnSetPointer (util::HOST);
 
       ValueT scale = 1 / (1 - p);
       auto &p = this->p;
