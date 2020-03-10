@@ -26,10 +26,6 @@ namespace gunrock {
 namespace app {
 namespace gcn {
 
-extern float GRAPHSUM_FW, GRAPHSUM_BW, SPRMUL_FW, SPRMUL_BW, DROPOUT_FW, DROPOUT_BW,
-    RELU_FW, RELU_BW, LOSS_FW, MATMUL_FW, MATMUL_BW;
-
-
 /**
  * @brief Speciflying parameters for SSSP Enactor
  * @param parameters The util::Parameter<...> structure holding all parameter
@@ -168,17 +164,17 @@ struct GCNIterationLoop
         get_loss_acc(data_slice, pair);
         printf("test_loss: %lf, test_acc: %lf, avg_train_time: %fms\n",
             pair.first, pair.second, data_slice.tot_time / data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::SPRMUL_FW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::SPRMUL_BW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::GRAPHSUM_FW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::GRAPHSUM_BW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::DROPOUT_FW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::DROPOUT_BW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::RELU_FW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::RELU_BW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::MATMUL_FW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::MATMUL_BW, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(gunrock::app::gcn::LOSS_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_sprmul, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_sprmul, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_graphsum, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_graphsum, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_dropout, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_dropout, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_relu, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_relu, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_matmul, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_matmul, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_loss, data_slice.max_iter);
     }
     return retval;
   }

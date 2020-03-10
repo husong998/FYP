@@ -51,6 +51,7 @@ cudaError_t UseParameters_problem(util::Parameters &parameters) {
 }
 
 struct module {
+  util::GpuTimer timer;
   virtual ~module() = default;
   virtual void forward(bool) = 0;
   virtual void backward() = 0;
@@ -58,11 +59,6 @@ struct module {
     return 0;
   }
 };
-
-util::GpuTimer timer;
-
-float GRAPHSUM_FW, GRAPHSUM_BW, SPRMUL_FW, SPRMUL_BW, DROPOUT_FW, DROPOUT_BW,
-RELU_FW, RELU_BW, LOSS_FW, MATMUL_FW, MATMUL_BW;
 
 /**
  * @brief Single-Source Shortest Path Problem structure.
@@ -119,10 +115,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     ProblemT *problem;
     EnactorT *enactor;
     int num_nodes, in_dim, out_dim;
+    float *fw_time, *bw_time;
 
-    sprmul(Parameters &p, SpmatT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
-        util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _in_dim, int _out_dim) :
-    a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), in_dim(_in_dim), out_dim(_out_dim) {
+    sprmul(Parameters &p, SpmatT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad, 
+        util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _in_dim, int _out_dim, 
+        float *_fw_time, float *_bw_time) :
+    a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), in_dim(_in_dim), out_dim(_out_dim), fw_time(_fw_time),
+    bw_time(_bw_time) {
       num_nodes = _a.nodes;
       problem = new ProblemT(p);
       enactor = new EnactorT();
@@ -139,7 +138,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Enact();
 
       timer.Stop ();
-      SPRMUL_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
@@ -149,7 +148,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Enact();
 
       timer.Stop ();
-      SPRMUL_BW += timer.ElapsedMillis ();
+      *bw_time += timer.ElapsedMillis ();
     }
   };
 
@@ -162,10 +161,11 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     ProblemT *problem;
     EnactorT *enactor;
     int dim;
+    float *fw_time, *bw_time;
 
     graph_sum(Parameters &p, GraphT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
-           util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _dim) :
-        a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), dim(_dim) {
+           util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _dim, float *_fw, float *_bw) :
+        a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), dim(_dim), fw_time(_fw), bw_time(_bw) {
       problem = new ProblemT(p);
       enactor = new EnactorT();
 
@@ -181,7 +181,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Enact();
 
       timer.Stop ();
-      GRAPHSUM_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
@@ -192,7 +192,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Enact();
 
       timer.Stop ();
-      GRAPHSUM_BW += timer.ElapsedMillis ();
+      *bw_time += timer.ElapsedMillis ();
     }
   };
 
@@ -206,11 +206,12 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     ProblemT *problem;
     EnactorT *enactor;
     int dim;
+    float *fw_time;
 
     cross_entropy(Parameters &p, Array _logits, Array _grad,
-                  util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes,
+                  util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes, float *_fw,
                   bool training=true) :
-        logits(_logits), grad(_grad), truth(_truth) {
+        logits(_logits), grad(_grad), truth(_truth), fw_time(_fw) {
       problem = new ProblemT(p);
       enactor = new EnactorT();
 
@@ -226,7 +227,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       enactor->Enact();
 
       timer.Stop ();
-      LOSS_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {}
@@ -246,24 +247,26 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     ProblemT *problem;
     EnactorT *enactor;
     int m, n, p;
+    float *fw_time, *bw_time;
 
     mat_mul(util::Array1D<SizeT, ValueT> &_a, util::Array1D<SizeT, ValueT> &_a_grad,
             util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
-            util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _m, int _n, int _p) :
+            util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _m, int _n, int _p,
+            float *fw, float *bw) : fw_time(fw), bw_time(bw),
         a(_a), b(_b), c(_c), a_grad(_a_grad), b_grad(_b_grad), c_grad(_c_grad), m(_m), n(_n), p(_p) {}
 
     virtual void forward(bool train) override {
       timer.Start ();
       dofw();
       timer.Stop ();
-      MATMUL_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
       timer.Start ();
       dobw();
       timer.Stop ();
-      MATMUL_BW += timer.ElapsedMillis ();
+      *bw_time += timer.ElapsedMillis ();
     }
 
     cudaError_t dofw() {
@@ -329,9 +332,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     util::Array1D<SizeT, ValueT> a, a_grad;
     util::Array1D<SizeT, bool> keep;
     int len;
+    float *fw_time, *bw_time;
 
-    relu(util::Array1D<SizeT, ValueT> &_a, util::Array1D<SizeT, ValueT> &_a_grad, int _len) :
-        a(_a), a_grad(_a_grad), len(_len) {
+    relu(util::Array1D<SizeT, ValueT> &_a, util::Array1D<SizeT, ValueT> &_a_grad, int _len, float *fw, float *bw) :
+        a(_a), a_grad(_a_grad), len(_len), fw_time(fw), bw_time(bw) {
       keep.Allocate (a.GetSize (), util::DEVICE);
     };
 
@@ -339,14 +343,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       timer.Start ();
       dofw(train);
       timer.Stop ();
-      RELU_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
       timer.Start ();
       dobw();
       timer.Stop ();
-      RELU_BW += timer.ElapsedMillis ();
+      *bw_time += timer.ElapsedMillis ();
     }
 
     cudaError_t dofw(bool train) {
@@ -385,7 +389,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     Array mask, data, *grad;
     ValueT p;
     curandGenerator_t *gen;
-    dropout(Array _data, Array *_grad, ValueT _p, curandGenerator_t *_gen) : p(_p), gen(_gen) {
+    float *fw_time, *bw_time;
+    dropout(Array _data, Array *_grad, ValueT _p, curandGenerator_t *_gen, float *fw, float *bw) :
+    p(_p), gen(_gen), fw_time(fw), bw_time(bw) {
       data = _data;
       grad = _grad;
       mask.Allocate(data.GetSize (), util::DEVICE);
@@ -396,13 +402,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         dofw();
       }
       timer.Stop ();
-      DROPOUT_FW += timer.ElapsedMillis ();
+      *fw_time += timer.ElapsedMillis ();
     }
     virtual void backward() override {
       timer.Start ();
       dobw();
       timer.Stop ();
-      DROPOUT_BW += timer.ElapsedMillis ();
+      *bw_time += timer.ElapsedMillis ();
     }
     cudaError_t dofw() {
       auto retval = cudaSuccess;
@@ -457,7 +463,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad, in_feature, x_val;
     curandGenerator_t gen;
     util::GpuTimer timer;
-    float tot_time = 0;
+    float tot_time = 0, fw_dropout = 0, fw_sprmul = 0, fw_matmul = 0, fw_graphsum = 0, fw_relu = 0, fw_loss = 0;
+    float bw_dropout = 0, bw_sprmul = 0, bw_matmul = 0, bw_graphsum = 0, bw_relu = 0;
 
     int in_dim, hid_dim, out_dim, num_nodes, max_iter;
     bool training;
@@ -576,14 +583,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       ))
 
       Array *dummy = nullptr;
-      modules.push_back(new dropout(x.edge_values, dummy, 0.5, &gen));
-      modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim));
-      modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim));
-      modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim));
-      modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5, &gen));
-      modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim));
-      modules.push_back(new graph_sum(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim));
-      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim));
+      modules.push_back(new dropout(x.edge_values, dummy, 0.5, &gen, &fw_dropout, &bw_dropout));
+      modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim, &fw_sprmul, &bw_sprmul));
+      modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim, &fw_graphsum, &bw_graphsum));
+      modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim, &fw_relu, &bw_relu));
+      modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5, &gen, &fw_dropout, &bw_dropout));
+      modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim, &fw_matmul, &bw_matmul));
+      modules.push_back(new graph_sum(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim, &fw_graphsum, &bw_graphsum));
+      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim, &fw_loss));
 
       x_val = static_cast<sprmul *>(modules[1])->problem->
           data_slices[0][0].sub_graph[0].SpmatT::CsrT::edge_values;
