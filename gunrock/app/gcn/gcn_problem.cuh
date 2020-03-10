@@ -361,14 +361,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
           if (train) k = x > 0;
           if (!k) x = 0;
         }, a.GetSize (), util::DEVICE))
-      ValueT res[a.GetSize ()];
-      GUARD_CU (a.SetPointer (res, a.GetSize (), util::HOST))
-      GUARD_CU (a.Move(util::DEVICE, util::HOST))
-      std::ofstream out("relu_forward");
-      out.precision(4);
-      out << std::fixed;
-      for (auto i = 0; i < a.GetSize (); i++) out << res[i] << '\n';
-      a.UnSetPointer (util::HOST);
 
       return retval;
     }
