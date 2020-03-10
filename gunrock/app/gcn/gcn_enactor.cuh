@@ -20,9 +20,15 @@
 #include <gunrock/app/gcn/gcn_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
+#define PRINT_TIMER_AVERAGE(T, E) printf(#T " average time: %.3fms\n", T / E)
+
 namespace gunrock {
 namespace app {
 namespace gcn {
+
+extern float GRAPHSUM_FW, GRAPHSUM_BW, SPRMUL_FW, SPRMUL_BW, DROPOUT_FW, DROPOUT_BW,
+    RELU_FW, RELU_BW, LOSS_FW, MATMUL_FW, MATMUL_BW;
+
 
 /**
  * @brief Speciflying parameters for SSSP Enactor
@@ -81,6 +87,9 @@ struct GCNIterationLoop
     auto &label = data_slice.label;
     auto &split = data_slice.split;
     auto &in_feature = data_slice.in_feature;
+    auto &timer = data_slice.timer;
+
+    timer.Start();
 
     GUARD_CU (data_slice.x_val.ForEach(in_feature,
         []__host__ __device__(ValueT &dst, ValueT &src) {
@@ -138,8 +147,10 @@ struct GCNIterationLoop
       }
       get_loss_acc(data_slice, pair);
       std::tie(val_loss, val_acc) = pair;
-      printf("epoch: %d, train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf\n",
-          iteration + 1, train_loss, train_acc, val_loss, val_acc);
+      timer.Stop();
+      printf("epoch: %d, train_loss: %lf, train_acc: %lf, val_loss: %lf, val_acc: %lf, time = %fms\n",
+          iteration + 1, train_loss, train_acc, val_loss, val_acc, timer.ElapsedMillis());
+      data_slice.tot_time += timer.ElapsedMillis();
     }
 
     if (iteration == data_slice.max_iter - 1) {
@@ -155,7 +166,19 @@ struct GCNIterationLoop
           m->forward(false);
         }
         get_loss_acc(data_slice, pair);
-        printf("test_loss: %lf, test_acc: %lf\n", pair.first, pair.second);
+        printf("test_loss: %lf, test_acc: %lf, avg_train_time: %fms\n",
+            pair.first, pair.second, data_slice.tot_time / data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::SPRMUL_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::SPRMUL_BW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::GRAPHSUM_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::GRAPHSUM_BW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::DROPOUT_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::DROPOUT_BW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::RELU_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::RELU_BW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::MATMUL_FW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::MATMUL_BW, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(gunrock::app::gcn::LOSS_FW, data_slice.max_iter);
     }
     return retval;
   }

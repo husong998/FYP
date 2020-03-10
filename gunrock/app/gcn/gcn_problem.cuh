@@ -59,6 +59,11 @@ struct module {
   }
 };
 
+util::GpuTimer timer;
+
+float GRAPHSUM_FW, GRAPHSUM_BW, SPRMUL_FW, SPRMUL_BW, DROPOUT_FW, DROPOUT_BW,
+RELU_FW, RELU_BW, LOSS_FW, MATMUL_FW, MATMUL_BW;
+
 /**
  * @brief Single-Source Shortest Path Problem structure.
  * @tparam _GraphT  Type of the graph
@@ -127,15 +132,24 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     }
 
     virtual void forward(bool train) override {
+      timer.Start ();
+
       problem->Reset(1, b, c);
       enactor->Reset();
       enactor->Enact();
+
+      timer.Stop ();
+      SPRMUL_FW += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
+      timer.Start ();
       problem->Reset(0, c_grad, b_grad);
       enactor->Reset();
       enactor->Enact();
+
+      timer.Stop ();
+      SPRMUL_BW += timer.ElapsedMillis ();
     }
   };
 
@@ -160,15 +174,25 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     }
 
     virtual void forward(bool train) override {
+      timer.Start ();
+
       problem->Reset(1, b, c);
       enactor->Reset();
       enactor->Enact();
+
+      timer.Stop ();
+      GRAPHSUM_FW += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
+      timer.Start ();
+
       problem->Reset(0, c_grad, b_grad);
       enactor->Reset();
       enactor->Enact();
+
+      timer.Stop ();
+      GRAPHSUM_BW += timer.ElapsedMillis ();
     }
   };
 
@@ -195,9 +219,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     }
 
     virtual void forward(bool train) override {
+      timer.Start ();
+
       problem->Reset(train);
       enactor->Reset();
       enactor->Enact();
+
+      timer.Stop ();
+      LOSS_FW += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {}
@@ -224,11 +253,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         a(_a), b(_b), c(_c), a_grad(_a_grad), b_grad(_b_grad), c_grad(_c_grad), m(_m), n(_n), p(_p) {}
 
     virtual void forward(bool train) override {
+      timer.Start ();
       dofw();
+      timer.Stop ();
+      MATMUL_FW += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
+      timer.Start ();
       dobw();
+      timer.Stop ();
+      MATMUL_BW += timer.ElapsedMillis ();
     }
 
     cudaError_t dofw() {
@@ -301,11 +336,17 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     };
 
     virtual void forward(bool train) override {
+      timer.Start ();
       dofw(train);
+      timer.Stop ();
+      RELU_FW += timer.ElapsedMillis ();
     }
 
     virtual void backward() override {
+      timer.Start ();
       dobw();
+      timer.Stop ();
+      RELU_BW += timer.ElapsedMillis ();
     }
 
     cudaError_t dofw(bool train) {
@@ -350,10 +391,18 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       mask.Allocate(data.GetSize (), util::DEVICE);
     };
     virtual void forward(bool train) override {
-      if (train) dofw();
+      timer.Start ();
+      if (train) {
+        dofw();
+      }
+      timer.Stop ();
+      DROPOUT_FW += timer.ElapsedMillis ();
     }
     virtual void backward() override {
+      timer.Start ();
       dobw();
+      timer.Stop ();
+      DROPOUT_BW += timer.ElapsedMillis ();
     }
     cudaError_t dofw() {
       auto retval = cudaSuccess;
@@ -407,6 +456,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
     Array penalty, w0, xw0, Axw0, Axw0w1, AAxw0w1, w1;
     Array w0_grad, xw0_grad, Axw0_grad, Axw0w1_grad, AAxw0w1_grad, w1_grad, in_feature, x_val;
     curandGenerator_t gen;
+    util::GpuTimer timer;
+    float tot_time = 0;
 
     int in_dim, hid_dim, out_dim, num_nodes, max_iter;
     bool training;
