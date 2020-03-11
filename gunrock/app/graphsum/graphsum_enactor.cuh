@@ -102,7 +102,7 @@ struct GraphsumIterationLoop
     };
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
-    oprtr_parameters.advance_mode = "ALL_EDGES";
+    oprtr_parameters.advance_mode = data_slice.lb_mode;
     auto null_ptr = &local_vertices;
     null_ptr = NULL;
     if (forward)
