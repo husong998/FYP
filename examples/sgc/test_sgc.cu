@@ -84,7 +84,7 @@ struct main_struct {
             typename ValueT=double>   // Use int as the value type
   cudaError_t
   operator()(util::Parameters &parameters, VertexT v, SizeT s, ValueT val) {
-    typedef typename app::TestGraph<VertexT, SizeT, ValueT, graph::HAS_CSR | HAS_EDGE_VALUES>
+    typedef typename app::TestGraph<VertexT, SizeT, ValueT, graph::HAS_CSR | graph::HAS_EDGE_VALUES>
         GraphT;
     // typedef typename GraphT::CooT CooT;
 
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
   cudaError_t retval = cudaSuccess;
   util::Parameters parameters("test graphsum");
   GUARD_CU(graphio::UseParameters(parameters));
-  GUARD_CU(app::gcn::UseParameters(parameters));
+  GUARD_CU(app::sgc::UseParameters(parameters));
   GUARD_CU(app::UseParameters_test(parameters));
   GUARD_CU(parameters.Parse_CommandLine(argc, argv));
   if (parameters.Get<bool>("help")) {

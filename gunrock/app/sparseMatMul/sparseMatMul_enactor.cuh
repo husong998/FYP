@@ -40,7 +40,7 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  * @tparam EnactorT Type of enactor
  */
 template <typename EnactorT>
-struct GraphsumIterationLoop
+struct SpmultIterationLoop
     : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
@@ -50,7 +50,7 @@ struct GraphsumIterationLoop
   typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
-  GraphsumIterationLoop() : BaseIterationLoop() {}
+  SpmultIterationLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -189,7 +189,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef GraphsumIterationLoop<EnactorT> IterationT;
+  typedef SpmultIterationLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;

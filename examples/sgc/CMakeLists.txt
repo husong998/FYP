@@ -3,15 +3,8 @@
 # ------------------------------------------------------------------------
 project(sgc)
 message("-- Project Added: ${PROJECT_NAME}")
+add_library(libcholmod SHARED IMPORTED)
+set_property(TARGET libcholmod PROPERTY IMPORTED_LOCATION "/home/husong/SuiteSparse-5.7.1/lib/libcholmod.so")
+include_directories("/home/husong/SuiteSparse-5.7.1/include")
 include(${CMAKE_SOURCE_DIR}/cmake/SetSubProject.cmake)
-
-add_test(NAME TEST_PR COMMAND pr market
-  ${gunrock_INCLUDE_DIRS}/dataset/small/bips98_606.mtx --normalized --compensate --undirected)
-set_tests_properties(TEST_PR PROPERTIES FAIL_REGULAR_EXPRESSION "INCORRECT")
-
-if(GUNROCK_MGPU_TESTS)
-  add_test(NAME TEST_MGPU_PR COMMAND pr market
-    ${gunrock_INCLUDE_DIRS}/dataset/small/bips98_606.mtx ${DEVICES} 
-    --normalized --compensate --undirected)
-  set_tests_properties(TEST_MGPU_PR PROPERTIES FAIL_REGULAR_EXPRESSION "INCORRECT")
-endif(GUNROCK_MGPU_TESTS)
+target_link_libraries(${PROJECT_NAME} libcholmod)

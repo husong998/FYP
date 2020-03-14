@@ -120,31 +120,35 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         int _in_dim, int _out_dim, float *_fw_time, float *_bw_time) :
         b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), in_dim(_in_dim), out_dim(_out_dim), fw_time(_fw_time),
         bw_time(_bw_time) {
+      typedef typename SpmatT::CsrT CsrT;
       // calculate S^k
       cholmod_common c;
       cholmod_start(&c);
       c.useGPU = 1;
       cholmod_sparse *t = cholmod_allocate_sparse(s.nodes, s.nodes, s.edges, 1, 1, 0, CHOLMOD_REAL, &c);
-      t->p = s.SpmatT::CsrT::Csr.row_offsets.GetPointer(util::HOST);
-      t->i = s.SpmatT::CsrT::Csr.column_indices.GetPointer(util::HOST);
-      t->x = s.SpmatT::CsrT::Csr.edge_values.GetPointer(util::HOST);
+      t->p = s.CsrT::row_offsets.GetPointer(util::HOST);
+      t->i = s.CsrT::column_indices.GetPointer(util::HOST);
+      t->x = s.CsrT::edge_values.GetPointer(util::HOST);
       cholmod_sparse *res = cholmod_speye(s.nodes, s.nodes, CHOLMOD_REAL, &c);
       for (int _ = 0; _ < k; _++) {
         cholmod_sparse *tmp = cholmod_ssmult(res, t, 0, 1, 1, &c);
-        cholmod_free(&res, &c);
+//        cholmod_free_sparse(&res, &c);
         res = tmp;
       }
       // calculate X'(S^k)'
-      cholmod_free(&t, &c);
+//      cholmod_free_sparse(&t, &c);
       t = cholmod_allocate_sparse(in_dim, s.nodes, x.edges, 1, 1, 0, CHOLMOD_REAL, &c);
+      t->p = x.CsrT::row_offsets.GetPointer(util::HOST);
+      t->i = x.CsrT::column_indices.GetPointer(util::HOST);
+      t->x = x.CsrT::edge_values.GetPointer(util::HOST);
       cholmod_sparse *tmp = cholmod_ssmult(t, res, 0, 1, 1, &c);
-      cholmod_free(&res, &c);
+//      cholmod_free_sparse(&res, &c);
       res = tmp;
       s.nodes = res->ncol;
       s.edges = res->nzmax;
-      s.SpmatT::CsrT::Csr.row_offsets.SetPointer(res->p, s.nodes, util::HOST);
-      s.SpmatT::CsrT::Csr.column_indices.SetPointer(res->i, s.edges, util::HOST);
-      s.SpmatT::CsrT::Csr.edge_values.SetPointer(res->x, s.edges, util::HOST);
+      s.CsrT::row_offsets.SetPointer((uint32_t *)res->p, s.nodes, util::HOST);
+      s.CsrT::column_indices.SetPointer((uint32_t *)res->i, s.edges, util::HOST);
+      s.CsrT::edge_values.SetPointer((ValueT *)res->x, s.edges, util::HOST);
 
       problem = new ProblemT(p);
       enactor = new EnactorT();

@@ -17,7 +17,7 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/gcn/gcn_problem.cuh>
+#include <gunrock/app/sgc/sgc_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 #define PRINT_TIMER_AVERAGE(T, E) printf(#T " average time: %.3fms\n", T / E)
@@ -52,7 +52,7 @@ struct SGCIterationLoop
   typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
-  GCNIterationLoop() : BaseIterationLoop() {}
+  SGCIterationLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -73,10 +73,10 @@ struct SGCIterationLoop
     auto &eps = data_slice.eps, &learning_rate = data_slice.learning_rate, &beta1 = data_slice.beta1,
     &beta2 = data_slice.beta2, &weight_decay = data_slice.weight_decay;
     auto &training = data_slice.training;
-    auto &w0 = data_slice.w0;
+    auto &w0 = data_slice.theta;
     auto &penalty = data_slice.penalty;
     auto &truth = data_slice.truth;
-    auto &out = data_slice.AAxw0w1;
+    auto &out = data_slice.SkXtheta;
     auto &cnt = data_slice.cnt;
     auto &out_dim = data_slice.out_dim;
     auto &wrong = data_slice.wrong;
@@ -87,10 +87,10 @@ struct SGCIterationLoop
 
     timer.Start();
 
-    GUARD_CU (data_slice.x_val.ForEach(in_feature,
-        []__host__ __device__(ValueT &dst, ValueT &src) {
-      dst = src;
-    }, in_feature.GetSize(), util::DEVICE))
+//    GUARD_CU (data_slice.x_val.ForEach(in_feature,
+//        []__host__ __device__(ValueT &dst, ValueT &src) {
+//      dst = src;
+//    }, in_feature.GetSize(), util::DEVICE))
 
     GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
       t[i] = split[i] == 1 ? label[i] : -1;
@@ -130,10 +130,10 @@ struct SGCIterationLoop
 //        v.Print("v: ", 10, util::DEVICE);
       }
 
-      GUARD_CU (data_slice.x_val.ForEach(in_feature,
-          []__host__ __device__(ValueT &dst, ValueT &src) {
-        dst = src;
-      }, in_feature.GetSize(), util::DEVICE))
+//      GUARD_CU (data_slice.x_val.ForEach(in_feature,
+//          []__host__ __device__(ValueT &dst, ValueT &src) {
+//        dst = src;
+//      }, in_feature.GetSize(), util::DEVICE))
 
       GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
         t[i] = split[i] == 2 ? label[i] : -1;
@@ -150,10 +150,10 @@ struct SGCIterationLoop
     }
 
     if (iteration == data_slice.max_iter - 1) {
-        GUARD_CU (data_slice.x_val.ForEach(in_feature,
-            []__host__ __device__(ValueT &dst, ValueT &src) {
-          dst = src;
-        }, in_feature.GetSize(), util::DEVICE))
+//        GUARD_CU (data_slice.x_val.ForEach(in_feature,
+//            []__host__ __device__(ValueT &dst, ValueT &src) {
+//          dst = src;
+//        }, in_feature.GetSize(), util::DEVICE))
         GUARD_CU(truth.ForAll([label, split]__host__ __device__(int *t, SizeT &i) {
           t[i] = split[i] == 1 ? label[i] : -1;
         }))
@@ -164,17 +164,10 @@ struct SGCIterationLoop
         get_loss_acc(data_slice, pair);
         printf("test_loss: %lf, test_acc: %lf, avg_train_time: %fms\n",
             pair.first, pair.second, data_slice.tot_time / data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.fw_sprmul, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.bw_sprmul, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.fw_graphsum, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.bw_graphsum, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.fw_dropout, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.bw_dropout, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.fw_relu, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.bw_relu, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.fw_matmul, data_slice.max_iter);
-        PRINT_TIMER_AVERAGE(data_slice.bw_matmul, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.fw_sgconv, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_sgconv, data_slice.max_iter);
         PRINT_TIMER_AVERAGE(data_slice.fw_loss, data_slice.max_iter);
+        PRINT_TIMER_AVERAGE(data_slice.bw_loss, data_slice.max_iter);
     }
     return retval;
   }
@@ -187,8 +180,8 @@ struct SGCIterationLoop
     auto &wrong = data_slice.wrong;
     auto &out_dim = data_slice.out_dim;
     auto &cnt = data_slice.cnt;
-    auto &out = data_slice.AAxw0w1;
-    auto &w0 = data_slice.w0;
+    auto &out = data_slice.SkXtheta;
+    auto &w0 = data_slice.theta;
     auto &truth = data_slice.truth;
     auto &modules = data_slice.modules;
 
@@ -304,7 +297,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef GCNIterationLoop<EnactorT> IterationT;
+  typedef SGCIterationLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;
