@@ -121,27 +121,37 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
         b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), in_dim(_in_dim), out_dim(_out_dim), fw_time(_fw_time),
         bw_time(_bw_time) {
       typedef typename SpmatT::CsrT CsrT;
+      util::GpuTimer timer;
+      float tot = 0;
       // calculate S^k
       cholmod_common c;
       cholmod_start(&c);
       c.useGPU = 1;
-      cholmod_sparse *t = cholmod_allocate_sparse(s.nodes, s.nodes, s.edges, 1, 1, 0, CHOLMOD_REAL, &c);
+      cholmod_sparse *t = cholmod_allocate_sparse(s.nodes, s.nodes, s.edges, 0, 1, 0, CHOLMOD_REAL, &c);
+      cholmod_sparse *res = t;
       t->p = s.CsrT::row_offsets.GetPointer(util::HOST);
       t->i = s.CsrT::column_indices.GetPointer(util::HOST);
       t->x = s.CsrT::edge_values.GetPointer(util::HOST);
-      cholmod_sparse *res = cholmod_speye(s.nodes, s.nodes, CHOLMOD_REAL, &c);
-      for (int _ = 0; _ < k; _++) {
-        cholmod_sparse *tmp = cholmod_ssmult(res, t, 0, 1, 1, &c);
+//      cholmod_sparse *res = cholmod_speye(s.nodes, s.nodes, CHOLMOD_REAL, &c);
+      timer.Start();
+      for (int _ = 0; _ < k - 1; _++) {
+        cholmod_sparse *tmp = cholmod_ssmult(res, t, 0, 1, 0, &c);
 //        cholmod_free_sparse(&res, &c);
         res = tmp;
       }
+      timer.Stop();
+      tot += timer.ElapsedMillis();
       // calculate X'(S^k)'
 //      cholmod_free_sparse(&t, &c);
-      t = cholmod_allocate_sparse(in_dim, s.nodes, x.edges, 1, 1, 0, CHOLMOD_REAL, &c);
+      t = cholmod_allocate_sparse(in_dim, s.nodes, x.edges, 0, 1, 0, CHOLMOD_REAL, &c);
       t->p = x.CsrT::row_offsets.GetPointer(util::HOST);
       t->i = x.CsrT::column_indices.GetPointer(util::HOST);
       t->x = x.CsrT::edge_values.GetPointer(util::HOST);
-      cholmod_sparse *tmp = cholmod_ssmult(t, res, 0, 1, 1, &c);
+      timer.Start();
+      cholmod_sparse *tmp = cholmod_ssmult(t, res, 0, 1, 0, &c);
+      timer.Stop();
+      tot += timer.ElapsedMillis();
+      printf("preprocess time: %fms", tot);
 //      cholmod_free_sparse(&res, &c);
       res = tmp;
       s.nodes = res->ncol;
@@ -334,7 +344,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       ))
 
       Array *dummy = nullptr;
-      modules.push_back(new sgconv(parameters, sub_graph, 2, x, theta, theta_grad, SkXtheta, SkXtheta_grad,
+      modules.push_back(new sgconv(parameters, sub_graph, 1, x, theta, theta_grad, SkXtheta, SkXtheta_grad,
           in_dim, out_dim, &fw_sgconv, &bw_sgconv));
       modules.push_back(new cross_entropy(parameters, SkXtheta, SkXtheta_grad, truth, num_nodes, out_dim, &fw_loss));
 
