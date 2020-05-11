@@ -85,7 +85,7 @@ struct GraphsumIterationLoop
           graph.GetNeighborListLength(dest);
       coef = 1.0 / sqrt(coef);
       for (int i = 0; i < dim; i++)
-        atomicAdd(out + dest * dim + i, *(in + src * dim + i) * coef);
+        atomicAdd(out + src * dim + i, *(in + dest * dim + i) * coef);
       return true;
     };
     auto backward_lambda =
