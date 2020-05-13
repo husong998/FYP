@@ -22,8 +22,9 @@
 #include <gunrock/app/test_base.cuh>
 
 // single-source shortest path includes
-#include <gunrock/app/sparseMatMul/sparseMatMul_enactor.cuh>
-#include <gunrock/app/sparseMatMul/sparseMatMul_test.cuh>
+#include <gunrock/app/gcn/graphsum/graphsum_enactor.cuh>
+
+#include <gunrock/app/gcn/module.h>
 
 /**
  * @brief      graphsum layer of GCN
@@ -42,7 +43,7 @@
 
 namespace gunrock {
 namespace app {
-namespace sparseMatMul {
+namespace graphsum {
 
 cudaError_t UseParameters(util::Parameters &parameters) {
   cudaError_t retval = cudaSuccess;
@@ -51,22 +52,25 @@ cudaError_t UseParameters(util::Parameters &parameters) {
   GUARD_CU(UseParameters_enactor(parameters));
 
   GUARD_CU(parameters.Use<std::string>(
-      "inx", util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
-      "", "input file name to feature matrix", __FILE__, __LINE__
-  ));
-//  GUARD_CU(parameters.Use<std::string>(
-//      "inw", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
-//      "", "input file name to weight matrix", __FILE__, __LINE__
-//  ));
-  GUARD_CU(parameters.Use<int>(
-      "hidden_dim", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
-      0, "hidden dimension of weight matrix", __FILE__, __LINE__
-  ));
+      "in",
+      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      "invalid",
+      "input file name to feature matrix", __FILE__, __LINE__
+      ));
 
-//  GUARD_CU(parameters.Use<int>(
-//      "dim", util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::OPTIONAL_PARAMETER,
-//      "", "input file name to feature matrix", __FILE__, __LINE__
-//  ));
+  GUARD_CU(parameters.Use<int>(
+      "dim",
+      util::REQUIRED_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      -1,
+      "feature vector dimension", __FILE__, __LINE__
+      ));
+
+  GUARD_CU(parameters.Use<std::string>(
+      "out",
+      util::OPTIONAL_ARGUMENT | util::SINGLE_VALUE | util::REQUIRED_PARAMETER,
+      "out",
+      "output file name", __FILE__, __LINE__
+      ));
 
   return retval;
 }
@@ -76,12 +80,56 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+struct graph_sum : module {
+  typedef app::graphsum::Problem<GraphT> ProblemT;
+  typedef app::graphsum::Enactor<ProblemT> EnactorT;
+
+  GraphT *a;
+  util::Array1D<SizeT, ValueT> b, c, b_grad, c_grad;
+  ProblemT *problem;
+  EnactorT *enactor;
+  int dim;
+  float *fw_time, *bw_time;
+
+  graph_sum(Parameters &p, GraphT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
+         util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _dim, float *_fw, float *_bw) :
+      a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), dim(_dim), fw_time(_fw), bw_time(_bw) {
+    problem = new ProblemT(p);
+    enactor = new EnactorT();
+
+    problem->Init(_a, dim);
+    enactor->Init(*problem);
+  }
+
+  virtual void forward(bool train) override {
+    timer.Start ();
+
+    problem->Reset(1, b, c);
+    enactor->Reset();
+    enactor->Enact();
+
+    timer.Stop ();
+    *fw_time += timer.ElapsedMillis ();
+  }
+
+  virtual void backward() override {
+    timer.Start ();
+
+    problem->Reset(0, c_grad, b_grad);
+    enactor->Reset();
+    enactor->Enact();
+
+    timer.Stop ();
+    *bw_time += timer.ElapsedMillis ();
+  }
+};
+
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
-double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
-                    const int out_dim, ValueT *in, ValueT *out) {
+double gcn_graphsum(gunrock::util::Parameters &parameters, GraphT &graph, const int dim,
+                    ValueT *in, ValueT *out) {
   typedef typename GraphT::VertexT VertexT;
-  typedef gunrock::app::sparseMatMul::Problem<GraphT> ProblemT;
-  typedef gunrock::app::sparseMatMul::Enactor<ProblemT> EnactorT;
+  typedef gunrock::app::graphsum::Problem<GraphT> ProblemT;
+  typedef gunrock::app::graphsum::Enactor<ProblemT> EnactorT;
   gunrock::util::CpuTimer cpu_timer;
   gunrock::util::Location target = gunrock::util::DEVICE;
   double total_time = 0;
@@ -90,7 +138,7 @@ double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const 
   // Allocate problem and enactor on GPU, and initialize them
   ProblemT problem(parameters);
   EnactorT enactor;
-  problem.Init(graph, dim, out_dim, in, target);
+  problem.Init(graph, dim, in, target);
   enactor.Init(problem, target);
 
   problem.Reset(in);
@@ -125,42 +173,32 @@ double sparseMatMul(gunrock::util::Parameters &parameters, GraphT &graph, const 
  * @return     double      Return accumulated elapsed times for all runs
  */
 template <typename VertexT = int, typename SizeT = int, typename ValueT = double>
-double sparseMatMul(gunrock::util::Parameters &parameters, const SizeT n_rows, const SizeT nnz,
-    SizeT *row_offsets, VertexT *col_indices, ValueT *vals,
-    const int dim, const int outdim, ValueT *b, ValueT *c) {
+double graphsum(const SizeT num_nodes, const SizeT num_edges,
+            const SizeT *row_offsets, const VertexT *col_indices, const int dim,
+            ValueT *in, ValueT *out) {
   typedef typename gunrock::app::TestGraph<VertexT, SizeT, ValueT,
-                                           gunrock::graph::HAS_EDGE_VALUES |
-                                               gunrock::graph::HAS_CSR>
-      GraphT;
+  gunrock::graph::HAS_CSR> GraphT;
   typedef typename GraphT::CsrT CsrT;
 
   // Setup parameters
-//  gunrock::util::Parameters parameters("sparseMatMul");
-//  gunrock::graphio::UseParameters(parameters);
-//  gunrock::app::sparseMatMul::UseParameters(parameters);
-//  gunrock::app::UseParameters_test(parameters);
-//  parameters.Parse_CommandLine(0, NULL);
-//  parameters.Set("graph-type", "by-pass");
-//
-//  bool quiet = parameters.Get<bool>("quiet");
+  gunrock::util::Parameters parameters("sparseMatMul");
+  gunrock::graphio::UseParameters(parameters);
+  gunrock::app::graphsum::UseParameters(parameters);
+  gunrock::app::UseParameters_test(parameters);
+  parameters.Parse_CommandLine(0, NULL);
+  parameters.Set("graph-type", "by-pass");
+
+  bool quiet = parameters.Get<bool>("quiet");
   GraphT graph;
   // Assign pointers into gunrock graph format
-  graph.CsrT::Allocate(n_rows, nnz, gunrock::util::HOST);
-  graph.CsrT::row_offsets.SetPointer(row_offsets, n_rows + 1, gunrock::util::HOST);
-  graph.CsrT::column_indices.SetPointer(col_indices, nnz, gunrock::util::HOST);
-  graph.CsrT::edge_values.SetPointer(vals, nnz, gunrock::util::HOST);
-
-//  graph.CsrT::row_offsets.Print();
-//  graph.CsrT::column_indices.Print();
-//  graph.CsrT::edge_values.Print();
-
-//  graph.Display();
-  graph.nodes = n_rows;
-  graph.edges = nnz;
+  graph.CsrT::Allocate(num_nodes, num_edges, gunrock::util::HOST);
+  graph.CsrT::row_offsets.SetPointer(row_offsets, num_nodes + 1, gunrock::util::HOST);
+  graph.CsrT::column_indices.SetPointer(col_indices, num_edges, gunrock::util::HOST);
+//  graph.FromCsr(graph.csr());
   gunrock::graphio::LoadGraph(parameters, graph);
 
   // Run the gcn_graphsum
-  double elapsed_time = sparseMatMul(parameters, graph, dim, outdim, b, c);
+  double elapsed_time = gcn_graphsum(parameters, graph, in, out);
 
   // Cleanup
   graph.Release();

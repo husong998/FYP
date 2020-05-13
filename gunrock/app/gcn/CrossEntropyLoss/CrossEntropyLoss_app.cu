@@ -22,8 +22,8 @@
 #include <gunrock/app/test_base.cuh>
 
 // single-source shortest path includes
-#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_enactor.cuh>
-#include <gunrock/app/CrossEntropyLoss/CrossEntropyLoss_test.cuh>
+#include <gunrock/app/gcn/CrossEntropyLoss/CrossEntropyLoss_enactor.cuh>
+#include <gunrock/app/gcn/CrossEntropyLoss/CrossEntropyLoss_test.cuh>
 
 /**
  * @brief      graphsum layer of GCN
@@ -68,6 +68,49 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 }
+
+struct cross_entropy : module {
+  typedef app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+  typedef app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+
+  GraphT dummy;
+  util::Array1D<SizeT, ValueT> logits, grad;
+  util::Array1D<SizeT, int> truth;
+  ProblemT *problem;
+  EnactorT *enactor;
+  int dim;
+  float *fw_time;
+
+  cross_entropy(Parameters &p, Array _logits, Array _grad,
+                util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes, float *_fw,
+                bool training=true) :
+          logits(_logits), grad(_grad), truth(_truth), fw_time(_fw) {
+    problem = new ProblemT(p);
+    enactor = new EnactorT();
+
+    problem->Init(dummy, num_nodes, num_classes, logits, grad, truth, training);
+    enactor->Init(*problem);
+  }
+
+  virtual void forward(bool train) override {
+    timer.Start ();
+
+    problem->Reset(train);
+    enactor->Reset();
+    enactor->Enact();
+
+    timer.Stop ();
+    *fw_time += timer.ElapsedMillis ();
+  }
+
+  virtual void backward() override {}
+
+  virtual double GetLoss() override {
+    double loss;
+    problem->Extract (&loss);
+    return loss;
+  }
+};
 
 template <typename GraphT, typename ValueT = typename GraphT::ValueT>
 double CrossEntropyLoss(gunrock::util::Parameters &parameters, GraphT &graph, const int num_nodes,

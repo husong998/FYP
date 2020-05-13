@@ -17,12 +17,12 @@
 #include <gunrock/app/enactor_base.cuh>
 #include <gunrock/app/enactor_iteration.cuh>
 #include <gunrock/app/enactor_loop.cuh>
-#include <gunrock/app/sparseMatMul/sparseMatMul_problem.cuh>
+#include <gunrock/app/gcn/graphsum/graphsum_problem.cuh>
 #include <gunrock/oprtr/oprtr.cuh>
 
 namespace gunrock {
 namespace app {
-namespace sparseMatMul {
+namespace graphsum {
 
 /**
  * @brief Speciflying parameters for SSSP Enactor
@@ -40,7 +40,7 @@ cudaError_t UseParameters_enactor(util::Parameters &parameters) {
  * @tparam EnactorT Type of enactor
  */
 template <typename EnactorT>
-struct SpmultIterationLoop
+struct GraphsumIterationLoop
     : public IterationLoopBase<EnactorT, Iteration_Default> {
   typedef typename EnactorT::VertexT VertexT;
   typedef typename EnactorT::SizeT SizeT;
@@ -50,7 +50,7 @@ struct SpmultIterationLoop
   typedef IterationLoopBase<EnactorT, Iteration_Default>
       BaseIterationLoop;
 
-  SpmultIterationLoop() : BaseIterationLoop() {}
+  GraphsumIterationLoop() : BaseIterationLoop() {}
 
   /**
    * @brief Core computation of sssp, one iteration
@@ -68,51 +68,53 @@ struct SpmultIterationLoop
     auto &frontier = enactor_slice.frontier;
     auto &oprtr_parameters = enactor_slice.oprtr_parameters;
     auto &retval = enactor_stats.retval;
-//    auto &iteration = enactor_stats.iteration;
-//    auto &in_dim = data_slice.in_dim;
-    auto &out_dim = data_slice.out_dim;
+    auto &iteration = enactor_stats.iteration;
+    auto &dim = data_slice.dim;
     auto &in = data_slice.input;
     auto &out = data_slice.output;
     auto &local_vertices = data_slice.local_vertices;
-    auto &weights = graph.CsrT::edge_values;
     auto &forward = data_slice.forward;
 
     // The advance operation
     auto forward_lambda =
-        [in, out, graph, out_dim, weights] __host__ __device__(
+        [in, out, graph, dim] __host__ __device__(
             const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      for (int i = 0; i < out_dim; i++) {
-        atomicAdd(out + src * out_dim + i, weights[edge_id] * in[dest * out_dim + i]);
-      }
+      ValueT coef = (long long)graph.GetNeighborListLength(src) *
+          graph.GetNeighborListLength(dest);
+      coef = 1.0 / sqrt(coef);
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + src * dim + i, *(in + dest * dim + i) * coef);
       return true;
     };
     auto backward_lambda =
-        [in, out, graph, out_dim, weights] __host__ __device__(
-            const VertexT &i, VertexT &j, const SizeT &edge_id,
+        [in, out, graph, dim] __host__ __device__(
+            const VertexT &src, VertexT &dest, const SizeT &edge_id,
             const VertexT &input_item, const SizeT &input_pos,
             SizeT &output_pos) -> bool {
-      for (int k = 0; k < out_dim; k++) {
-        atomicAdd(out + j * out_dim + k, weights[edge_id] * in[i * out_dim + k]);
-      }
+      ValueT coef = (long long)graph.GetNeighborListLength(src) *
+          graph.GetNeighborListLength(dest);
+      coef = 1.0 / sqrt(coef);
+      for (int i = 0; i < dim; i++)
+        atomicAdd(out + src * dim + i, *(in + dest * dim + i) * coef);
       return true;
     };
     frontier.queue_length = local_vertices.GetSize();
     frontier.queue_reset = true;
-    oprtr_parameters.advance_mode = "ALL_EDGES";
+    oprtr_parameters.advance_mode = data_slice.lb_mode;
     auto null_ptr = &local_vertices;
     null_ptr = NULL;
     if (forward)
       {
         GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
             graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
-            forward_lambda))
+            forward_lambda));
       } else {
         GUARD_CU(oprtr::Advance<oprtr::OprtrType_V2V> (
             graph.csr (), &local_vertices, null_ptr, oprtr_parameters,
-            backward_lambda))
-    }
+            backward_lambda));
+      }
 
     enactor_stats.edges_queued[0] += graph.edges;
     return retval;
@@ -189,7 +191,7 @@ class Enactor
   typedef EnactorBase<GraphT, LabelT, ValueT, ARRAY_FLAG, cudaHostRegisterFlag>
       BaseEnactor;
   typedef Enactor<Problem, ARRAY_FLAG, cudaHostRegisterFlag> EnactorT;
-  typedef SpmultIterationLoop<EnactorT> IterationT;
+  typedef GraphsumIterationLoop<EnactorT> IterationT;
 
   // Members
   Problem *problem;
@@ -306,7 +308,7 @@ class Enactor
   cudaError_t Enact() {
     cudaError_t retval = cudaSuccess;
     GUARD_CU(this->Run_Threads(this));
-    util::PrintMsg("GPU sparseMatMul Done.", this->flag & Debug);
+    util::PrintMsg("GPU graphsum Done.", this->flag & Debug);
     return retval;
   }
 
