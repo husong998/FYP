@@ -32,7 +32,7 @@ set(CUFILES
   ##app/bfs/bfs_app.cu
   #app/bc/bc_app.cu
   ##app/cc/cc_app.cu
-  app/graphsum/graphsum_app.cu
+#  app/graphsum/graphsum_app.cu
   app/pr/pr_app.cu
   app/hits/hits_app.cu
   app/sm/sm_app.cu

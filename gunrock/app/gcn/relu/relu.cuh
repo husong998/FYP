@@ -6,6 +6,7 @@
 
 #include <gunrock/app/gcn/module.h>
 
+template <typename SizeT, typename ValueT>
 struct relu : module {
   util::Array1D<SizeT, ValueT> a, a_grad;
   util::Array1D<SizeT, bool> keep;

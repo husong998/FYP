@@ -5,13 +5,14 @@
 
 #include <gunrock/app/gcn/module.h>
 
+template <typename SizeT, typename ValueT>
 struct mat_mul : module {
-  typedef app::graphsum::Problem<GraphT> ProblemT;
-  typedef app::graphsum::Enactor<ProblemT> EnactorT;
+//  typedef app::graphsum::Problem<GraphT> ProblemT;
+//  typedef app::graphsum::Enactor<ProblemT> EnactorT;
 
   util::Array1D<SizeT, ValueT> b, c, b_grad, c_grad, a, a_grad;
-  ProblemT *problem;
-  EnactorT *enactor;
+//  ProblemT *problem;
+//  EnactorT *enactor;
   int m, n, p;
   float *fw_time, *bw_time;
 

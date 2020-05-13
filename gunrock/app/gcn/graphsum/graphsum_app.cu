@@ -80,6 +80,7 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+template <typename SizeT, typename ValueT, typename GraphT>
 struct graph_sum : module {
   typedef app::graphsum::Problem<GraphT> ProblemT;
   typedef app::graphsum::Enactor<ProblemT> EnactorT;

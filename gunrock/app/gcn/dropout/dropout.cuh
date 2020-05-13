@@ -6,7 +6,9 @@
 
 #include <gunrock/app/gcn/module.h>
 
+template <typename SizeT, typename ValueT>
 struct dropout : module {
+  typedef util::Array1D<SizeT, ValueT> Array;
   Array mask, data, *grad;
   ValueT p;
   curandGenerator_t *gen;

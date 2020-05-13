@@ -78,6 +78,7 @@ return retval;
 }
 }
 
+template <typename SizeT, typename ValueT, typename SpmatT>
 struct sprmul : module {
   typedef app::sparseMatMul::Problem<SpmatT> ProblemT;
   typedef app::sparseMatMul::Enactor<ProblemT> EnactorT;

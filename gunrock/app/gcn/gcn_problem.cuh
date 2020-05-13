@@ -231,14 +231,14 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       ))
 
       Array *dummy = nullptr;
-      modules.push_back(new dropout(x.edge_values, dummy, 0.5, &gen, &fw_dropout, &bw_dropout));
-      modules.push_back(new sprmul(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim, &fw_sprmul, &bw_sprmul));
-      modules.push_back(new graph_sum(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim, &fw_graphsum, &bw_graphsum));
-      modules.push_back(new relu(Axw0, Axw0_grad, num_nodes * hid_dim, &fw_relu, &bw_relu));
-      modules.push_back(new dropout(Axw0, &Axw0_grad, 0.5, &gen, &fw_dropout, &bw_dropout));
-      modules.push_back(new mat_mul(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim, &fw_matmul, &bw_matmul));
-      modules.push_back(new graph_sum(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim, &fw_graphsum, &bw_graphsum));
-      modules.push_back(new cross_entropy(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim, &fw_loss));
+      modules.push_back(new dropout<SizeT, ValueT>(x.edge_values, dummy, 0.5, &gen, &fw_dropout, &bw_dropout));
+      modules.push_back(new sprmul<SizeT, ValueT, SpmatT>(parameters, x, w0, w0_grad, xw0, xw0_grad, in_dim, hid_dim, &fw_sprmul, &bw_sprmul));
+      modules.push_back(new graph_sum<SizeT, ValueT, GraphT>(parameters, sub_graph, xw0, xw0_grad, Axw0, Axw0_grad, hid_dim, &fw_graphsum, &bw_graphsum));
+      modules.push_back(new relu<SizeT, ValueT>(Axw0, Axw0_grad, num_nodes * hid_dim, &fw_relu, &bw_relu));
+      modules.push_back(new dropout<SizeT, ValueT>(Axw0, &Axw0_grad, 0.5, &gen, &fw_dropout, &bw_dropout));
+      modules.push_back(new mat_mul<SizeT, ValueT>(Axw0, Axw0_grad, w1, w1_grad, Axw0w1, Axw0w1_grad, num_nodes, hid_dim, out_dim, &fw_matmul, &bw_matmul));
+      modules.push_back(new graph_sum<SizeT, ValueT, GraphT>(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim, &fw_graphsum, &bw_graphsum));
+      modules.push_back(new cross_entropy<SizeT, ValueT, GraphT>(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim, &fw_loss));
 
       x_val = static_cast<sprmul *>(modules[1])->problem->
           data_slices[0][0].sub_graph[0].SpmatT::CsrT::edge_values;

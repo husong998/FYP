@@ -9,7 +9,7 @@
 #add_subdirectory(MatMul)
 #add_subdirectory(CrossEntropyLoss)
 add_subdirectory(gcn)
-add_subdirectory(sgc)
+#add_subdirectory(sgc)
 
 # end /* Add premitives' subdirectories */
 
