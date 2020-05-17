@@ -18,6 +18,9 @@
 #include <gunrock/app/gcn/sparseMatMul/sparseMatMul_app.cu>
 #include <gunrock/app/gcn/graphsum/graphsum_app.cu>
 #include <gunrock/app/gcn/CrossEntropyLoss/CrossEntropyLoss_app.cu>
+#include <gunrock/app/gcn/dropout/dropout.cuh>
+#include <gunrock/app/gcn/matmul/mat_mul.cuh>
+#include <gunrock/app/gcn/relu/relu.cuh>
 
 namespace gunrock {
 namespace app {

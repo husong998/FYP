@@ -5,10 +5,11 @@
 #define DROPOUT_H
 
 #include <gunrock/app/gcn/module.h>
+#include <gunrock/util/array_utils.cuh>
 
 template <typename SizeT, typename ValueT>
 struct dropout : module {
-  typedef util::Array1D<SizeT, ValueT> Array;
+  typedef gunrock::util::Array1D<SizeT, ValueT> Array;
   Array mask, data, *grad;
   ValueT p;
   curandGenerator_t *gen;

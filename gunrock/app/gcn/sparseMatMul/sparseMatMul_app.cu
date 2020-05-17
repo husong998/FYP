@@ -80,6 +80,7 @@ return retval;
 
 template <typename SizeT, typename ValueT, typename SpmatT>
 struct sprmul : module {
+  using namespace gunrock;
   typedef app::sparseMatMul::Problem<SpmatT> ProblemT;
   typedef app::sparseMatMul::Enactor<ProblemT> EnactorT;
 
@@ -90,7 +91,7 @@ struct sprmul : module {
   int num_nodes, in_dim, out_dim;
   float *fw_time, *bw_time;
 
-  sprmul(Parameters &p, SpmatT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
+  sprmul(util::Parameters &p, SpmatT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
       util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _in_dim, int _out_dim,
       float *_fw_time, float *_bw_time) :
   a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), in_dim(_in_dim), out_dim(_out_dim), fw_time(_fw_time),

@@ -2,14 +2,13 @@
 #define MAT_MUL_CUH
 
 #include <gunrock/app/gcn/module.h>
-
-#include <gunrock/app/gcn/module.h>
+#include <gunrock/util/array_utils.cuh>
 
 template <typename SizeT, typename ValueT>
 struct mat_mul : module {
 //  typedef app::graphsum::Problem<GraphT> ProblemT;
 //  typedef app::graphsum::Enactor<ProblemT> EnactorT;
-
+  using namespace gunrock;
   util::Array1D<SizeT, ValueT> b, c, b_grad, c_grad, a, a_grad;
 //  ProblemT *problem;
 //  EnactorT *enactor;

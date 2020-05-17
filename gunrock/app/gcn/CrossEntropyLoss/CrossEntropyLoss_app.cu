@@ -71,6 +71,7 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 
 template <typename SizeT, typename ValueT, typename GraphT>
 struct cross_entropy : module {
+  using namespace gunrock;
   typedef app::CrossEntropyLoss::Problem<GraphT> ProblemT;
   typedef app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
 

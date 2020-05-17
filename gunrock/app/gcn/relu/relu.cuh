@@ -5,9 +5,11 @@
 #define RELU_H
 
 #include <gunrock/app/gcn/module.h>
+#include <gunrock/util/array_utils.cuh>
 
 template <typename SizeT, typename ValueT>
 struct relu : module {
+  using namespace gunrock;
   util::Array1D<SizeT, ValueT> a, a_grad;
   util::Array1D<SizeT, bool> keep;
   int len;

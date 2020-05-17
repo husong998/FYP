@@ -82,6 +82,7 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 
 template <typename SizeT, typename ValueT, typename GraphT>
 struct graph_sum : module {
+  using namespace gunrock;
   typedef app::graphsum::Problem<GraphT> ProblemT;
   typedef app::graphsum::Enactor<ProblemT> EnactorT;
 
