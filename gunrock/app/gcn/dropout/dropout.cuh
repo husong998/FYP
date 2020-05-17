@@ -69,6 +69,7 @@ struct dropout : module {
                             [p, scale]__host__ __device__(ValueT &x, ValueT &g) {
       g *= x >= p ? scale : 0;
     }))
+    return retval;
   }
 };
 

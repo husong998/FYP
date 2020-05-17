@@ -80,9 +80,10 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+using namespace gunrock;
+
 template <typename SizeT, typename ValueT, typename GraphT>
 struct graph_sum : module {
-  using namespace gunrock;
   typedef app::graphsum::Problem<GraphT> ProblemT;
   typedef app::graphsum::Enactor<ProblemT> EnactorT;
 
@@ -93,7 +94,7 @@ struct graph_sum : module {
   int dim;
   float *fw_time, *bw_time;
 
-  graph_sum(Parameters &p, GraphT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
+  graph_sum(util::Parameters &p, GraphT &_a, util::Array1D<SizeT, ValueT> &_b, util::Array1D<SizeT, ValueT> &_b_grad,
          util::Array1D<SizeT, ValueT> &_c, util::Array1D<SizeT, ValueT> &_c_grad, int _dim, float *_fw, float *_bw) :
       a(&_a), b(_b), c(_c), b_grad(_b_grad), c_grad(_c_grad), dim(_dim), fw_time(_fw), bw_time(_bw) {
     problem = new ProblemT(p);

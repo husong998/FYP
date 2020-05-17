@@ -78,9 +78,10 @@ return retval;
 }
 }
 
+using namespace gunrock;
+
 template <typename SizeT, typename ValueT, typename SpmatT>
 struct sprmul : module {
-  using namespace gunrock;
   typedef app::sparseMatMul::Problem<SpmatT> ProblemT;
   typedef app::sparseMatMul::Enactor<ProblemT> EnactorT;
 

@@ -243,9 +243,9 @@ struct Problem : ProblemBase<_GraphT, _FLAG> {
       modules.push_back(new graph_sum<SizeT, ValueT, GraphT>(parameters, sub_graph, Axw0w1, Axw0w1_grad, AAxw0w1, AAxw0w1_grad, out_dim, &fw_graphsum, &bw_graphsum));
       modules.push_back(new cross_entropy<SizeT, ValueT, GraphT>(parameters, AAxw0w1, AAxw0w1_grad, truth, num_nodes, out_dim, &fw_loss));
 
-      x_val = static_cast<sprmul *>(modules[1])->problem->
+      x_val = static_cast<sprmul<SizeT, ValueT, SpmatT>*>(modules[1])->problem->
           data_slices[0][0].sub_graph[0].SpmatT::CsrT::edge_values;
-      static_cast<dropout*>(modules[0])->data = x_val;
+      static_cast<dropout<SizeT, ValueT>*>(modules[0])->data = x_val;
 
       GUARD_CU(x.edge_values.ForEach(in_feature,
           []__host__ __device__(ValueT &src, ValueT &dst) {

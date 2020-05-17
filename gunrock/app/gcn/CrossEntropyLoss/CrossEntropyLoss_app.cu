@@ -69,11 +69,13 @@ cudaError_t UseParameters(util::Parameters &parameters) {
 }
 }
 
+using namespace gunrock;
+
 template <typename SizeT, typename ValueT, typename GraphT>
 struct cross_entropy : module {
-  using namespace gunrock;
-  typedef app::CrossEntropyLoss::Problem<GraphT> ProblemT;
-  typedef app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+  typedef gunrock::app::CrossEntropyLoss::Problem<GraphT> ProblemT;
+  typedef gunrock::app::CrossEntropyLoss::Enactor<ProblemT> EnactorT;
+  typedef util::Array1D<SizeT, ValueT> Array;
 
   GraphT dummy;
   util::Array1D<SizeT, ValueT> logits, grad;
@@ -83,7 +85,7 @@ struct cross_entropy : module {
   int dim;
   float *fw_time;
 
-  cross_entropy(Parameters &p, Array _logits, Array _grad,
+  cross_entropy(util::Parameters &p, Array _logits, Array _grad,
                 util::Array1D<SizeT, int> _truth, int num_nodes, int num_classes, float *_fw,
                 bool training=true) :
           logits(_logits), grad(_grad), truth(_truth), fw_time(_fw) {
